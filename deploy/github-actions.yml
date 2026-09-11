@@ -1,0 +1,25 @@
+# devloop on GitHub: label events and comments fire a run; schedule fires the monitor.
+# Requires: DEVLOOP agent CLI + gh authenticated in the runner.
+name: devloop
+on:
+  issues:
+    types: [labeled]
+  workflow_dispatch:
+
+jobs:
+  run:
+    if: github.event.label.name == 'ai-fix' || github.event.label.name == 'ai-build' || github.event.label.name == 'ai-remove'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install devloop  # or: pip install git+https://github.com/YOURORG/devloop
+      - run: devloop once
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

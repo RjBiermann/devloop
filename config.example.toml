@@ -1,0 +1,31 @@
+# devloop configuration — copy to config.toml and edit.
+# Everything has a working default; only [forge].repo is required.
+version = 1              # config schema version — bumping = migration, old files rejected with a clear error
+
+[forge]
+kind = "github"            # github | gitlab | gitea (adapters ship over time)
+repo = "owner/name"        # where issues and PRs live
+
+[labels]
+# Rename freely — your vocabulary, your users.
+fix = "ai-fix"             # broken thing, agent repairs it
+new = "ai-build"        # new unit of work, agent builds it
+remove = "ai-remove"  # delete something, with evidence first
+
+[runtime]
+engine = "opencode"        # opencode | claude | goose | custom
+argv = ["opencode", "run"] # prompt is appended as the final argument
+
+[pipeline]
+verify = ""              # the gate. e.g. "make verify" — empty = skip
+review_rounds = 2          # AI pre-review rounds before human review
+max_parallel = 1           # concurrent builds. 1 = serial: no merge conflicts by construction
+poll_seconds = 300         # watch-mode poll interval
+
+[access]
+# who may trigger AI flows (approve specs, run commands). AI tokens cost
+# money — default is the narrowest useful set.
+mode = "maintainers"       # owners | maintainers | collaborators | everyone
+allow = []                 # usernames always allowed, e.g. ["contributor-x"]
+deny = []                  # usernames never allowed — wins over mode and allow
+timeout = 1800             # per-agent-run timeout, seconds

@@ -1,0 +1,105 @@
+"""Forge interface. Every forge adapter implements this — and inherits the guardrails."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from ..guardrails import HUMAN_ONLY, GuardrailViolation
+
+
+@dataclass
+class Issue:
+    number: int
+    title: str
+    body: str
+    labels: list[str] = field(default_factory=list)
+
+
+@dataclass
+class Comment:
+    author: str
+    body: str
+
+
+class Forge:
+    """Adapter for one git forge. Subclasses implement the primitives;
+    guardrails are enforced here in the base so no adapter can forget."""
+
+    # --- read side -------------------------------------------------------
+    def issues_with_labels(self, labels: list[str]) -> list[Issue]:
+        raise NotImplementedError
+
+    def issue(self, number: int) -> Issue:
+        raise NotImplementedError
+
+    def create_issue(self, title: str, body: str) -> int:
+        """Create an issue. Returns its number. NEVER carries a trigger label —
+        the human decides which stories to build."""
+        raise NotImplementedError
+
+    def edit_issue_body(self, number: int, body: str) -> None:
+        raise NotImplementedError
+
+    def comments(self, number: int) -> list[Comment]:
+        return []
+
+    # --- write side ------------------------------------------------------
+    def start_work(self, number: int, branch: str) -> None:
+        """Create `branch` from the default branch and check it out."""
+        raise NotImplementedError
+
+    def commit_all(self, message: str) -> None:
+        raise NotImplementedError
+
+    def open_pr(self, branch: str, title: str, body: str) -> None:
+        raise NotImplementedError
+
+    def comment(self, number: int, body: str) -> None:
+        raise NotImplementedError
+
+    # --- human-only operations: blocked in the base -----------------------
+    def merge(self, pr_number: int) -> None:
+        self._human_only("merge")
+
+    def approve(self, pr_number: int) -> None:
+        self._human_only("approve")
+
+    def close_issue(self, number: int) -> None:
+        self._human_only("close_issue")
+
+    def apply_trigger(self, number: int, label: str) -> None:
+        self._human_only("apply_trigger")
+
+    def _human_only(self, op: str) -> None:
+        assert op in HUMAN_ONLY
+        raise GuardrailViolation(
+            f"{op!r} is human-only — agents may never {op} (guardrail: {op})"
+        )
+
+    # --- trigger authority: who may fire AI flows -------------------------
+    # AI tokens cost money — default is the narrowest useful set (maintainers),
+    # configurable per repo: owners | maintainers | collaborators | everyone,
+    # with allow/deny username lists on top (deny wins).
+    def is_owner(self, author: str) -> bool:
+        raise NotImplementedError
+
+    def is_maintainer(self, author: str) -> bool:
+        raise NotImplementedError
+
+    def is_collaborator(self, author: str) -> bool:
+        raise NotImplementedError
+
+    def is_authorized(self, author: str, access) -> bool:
+        # usernames are case-insensitive on GitHub-family forges
+        a = author.lower()
+        if a in {d.lower() for d in access.deny}:
+            return False
+        if a in {u.lower() for u in access.allow}:
+            return True
+        if access.mode == "everyone":
+            return True
+        if access.mode == "owners":
+            return self.is_owner(author)
+        if access.mode == "collaborators":
+            return self.is_collaborator(author)
+        return self.is_maintainer(author)  # default: maintainers
