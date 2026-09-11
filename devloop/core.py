@@ -163,10 +163,40 @@ def process_issue(cfg: Config, forge: Forge, runtime: AgentRuntime, issue: Issue
             f"- gate: {'PASS' if gate_ok else 'FAIL'}"
             + (f" (`{cfg.pipeline.verify}`)" if cfg.pipeline.verify else " (none configured)")
             + "\n\nHuman merge required — agents never merge."
+            + "\n\n## Agent report\n\n" + res.output[-4000:].strip()
         ),
     )
     forge.comment(issue.number, f"Work delivered on `{branch}` — gate {'PASS' if gate_ok else 'FAIL'}.")
+    review_pr(cfg, forge, runtime, issue.number, branch)
     return Outcome(issue.number, branch, res.ok, gate_ok)
+
+
+REVIEW_PROMPT = (
+    "You are reviewing a pull request authored by another AI agent. Review "
+    "the diff below against the issue it closes: correctness, scope creep "
+    "(changes the issue never asked for), repo-convention violations "
+    "(AGENTS.md), and missing tests. Do NOT make changes.\n\n"
+    "Output format: the single word `LGTM` if the PR is ready for human "
+    "review, otherwise a numbered findings list — each finding as "
+    "`file:line — severity (P0/P1/P2) — one-paragraph rationale`.\n\n"
+    "## The diff\n```diff\n{diff}\n```"
+)
+
+
+def review_pr(cfg: Config, forge: Forge, runtime: AgentRuntime, number: int, branch: str) -> None:
+    """AI pre-review rounds (pipeline.review_rounds). Findings only — no
+    auto-fix in v0.1: a human reads them on the PR. Stops early on LGTM."""
+    for rnd in range(1, cfg.pipeline.review_rounds + 1):
+        res = runtime.run(
+            REVIEW_PROMPT.format(diff=forge.pr_diff(branch)[:40000]),
+            cwd=".", timeout=cfg.pipeline.timeout)
+        if not res.ok:
+            forge.pr_comment(number, f"AI pre-review round {rnd}: reviewer run failed.")
+            return
+        forge.pr_comment(number, f"**AI pre-review, round {rnd}/{cfg.pipeline.review_rounds}**\n\n"
+                                 + res.output.strip()[-4000:])
+        if "LGTM" in res.output[-200:].upper():
+            return
 
 
 def run_once(cfg: Config, forge: Forge, runtime: AgentRuntime) -> list[Outcome]:

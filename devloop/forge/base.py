@@ -60,6 +60,13 @@ class Forge:
     def comment(self, number: int, body: str) -> None:
         raise NotImplementedError
 
+    def pr_comment(self, pr_number: int, body: str) -> None:
+        raise NotImplementedError
+
+    def pr_diff(self, branch: str) -> str:
+        """Unified diff of branch vs the default branch (for AI review)."""
+        return ""
+
     # --- human-only operations: blocked in the base -----------------------
     def merge(self, pr_number: int) -> None:
         self._human_only("merge")

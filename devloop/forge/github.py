@@ -59,6 +59,13 @@ class GitHub(Forge):
     def comment(self, number: int, body: str) -> None:
         _run(["gh", "issue", "comment", str(number), "-R", self.repo, "--body", body])
 
+    def pr_comment(self, pr_number: int, body: str) -> None:
+        _run(["gh", "pr", "comment", str(pr_number), "-R", self.repo, "--body", body])
+
+    def pr_diff(self, branch: str) -> str:
+        default = _run(["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"]).strip()
+        return _run(["git", "diff", f"{default}...{branch}"])
+
     def comments(self, number: int) -> list[Comment]:
         # --paginate: long spec conversations exceed gh's default 30-per-page
         out = _run(["gh", "api", f"repos/{self.repo}/issues/{number}/comments",
