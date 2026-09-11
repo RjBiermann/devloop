@@ -64,7 +64,7 @@ class GitHub(Forge):
 
     def pr_for_branch(self, branch: str) -> int | None:
         out = _run(["gh", "pr", "list", "-R", self.repo, "--head", branch,
-                    "--state", "open", "--json", "number", "--jq", "[.[0].number]"])
+                    "--state", "open", "--json", "number", "--jq", "[.[].number]"])
         nums = json.loads(out or "[]")
         return int(nums[0]) if nums else None
 
