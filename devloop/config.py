@@ -17,10 +17,11 @@ class Labels:
     fix: str = "ai-fix"
     new: str = "ai-build"
     remove: str = "ai-remove"
+    task: str = "ai-task"  # fully specified non-code-arcana work (reviews, audits)
 
     @property
     def triggers(self) -> list[str]:
-        return [self.fix, self.new, self.remove]
+        return [self.fix, self.new, self.remove, self.task]
 
 @dataclass
 class Runtime:
@@ -69,6 +70,8 @@ class Config:
             return "fix"
         if hits[0] == self.labels.new:
             return "new"
+        if hits[0] == self.labels.task:
+            return "task"
         return "remove"
 
 
