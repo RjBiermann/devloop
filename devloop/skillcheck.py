@@ -32,8 +32,7 @@ def validate_skills(roots: list[str | Path]) -> list[str]:
     for root in roots:
         p = Path(root)
         if not p.exists():
-            out.append(f"skills path missing: {p}")
-            continue
+            continue  # no skills dir is normal (CI installs, fresh checkouts)
         for d in sorted(p.iterdir()):
             if not d.is_dir():
                 continue

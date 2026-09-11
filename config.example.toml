@@ -21,6 +21,7 @@ verify = ""              # the gate. e.g. "make verify" — empty = skip
 review_rounds = 2          # AI pre-review rounds before human review
 max_parallel = 1           # concurrent builds. 1 = serial: no merge conflicts by construction
 poll_seconds = 300         # watch-mode poll interval
+timeout = 1800             # per-agent-run timeout, seconds
 
 [access]
 # who may trigger AI flows (approve specs, run commands). AI tokens cost
@@ -28,4 +29,3 @@ poll_seconds = 300         # watch-mode poll interval
 mode = "maintainers"       # owners | maintainers | collaborators | everyone
 allow = []                 # usernames always allowed, e.g. ["contributor-x"]
 deny = []                  # usernames never allowed — wins over mode and allow
-timeout = 1800             # per-agent-run timeout, seconds
