@@ -165,6 +165,12 @@ def run_once(cfg: Config, forge: Forge, runtime: AgentRuntime) -> list[Outcome]:
     #      designs touch-sets disjoint; raising max_parallel is a deliberate
     #      throughput choice backed by that discipline)
     if len(devloop_heads) >= cfg.pipeline.max_parallel:
+        # Queue full — say so, loudly. Silent green no-ops are the worst
+        # failure mode a pipeline can have (the human believes it ran).
+        print(f"queue full: {len(devloop_heads)} build(s) in flight "
+              f"({', '.join(devloop_heads)}); nothing started — "
+              "merge/close the open devloop PR(s) or raise pipeline.max_parallel",
+              file=sys.stderr)
         return []
     delivered = set(open_heads)
     out = []
