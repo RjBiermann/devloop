@@ -128,8 +128,16 @@ def process_issue(cfg: Config, forge: Forge, runtime: AgentRuntime, issue: Issue
     kind = cfg.kind_for(issue.labels)  # raises if triggers are not exclusive
     branch = f"devloop/issue-{issue.number}"
     forge.start_work(issue.number, branch)
-    res = runtime.run(PROMPTS[kind].format(n=issue.number, title=issue.title, body=issue.body),
-                      cwd=".", timeout=cfg.pipeline.timeout)
+    res = None
+    try:
+        res = runtime.run(PROMPTS[kind].format(n=issue.number, title=issue.title, body=issue.body),
+                          cwd=".", timeout=cfg.pipeline.timeout)
+    except Exception as e:
+        # Timeout/explosion mid-run: no delivery, but the human must know.
+        forge.comment(issue.number,
+                      f"agent run FAILED ({type(e).__name__}) — no PR opened. tail:\n"
+                      f"```\n{str(e)[-800:]}\n```")
+        return Outcome(issue.number, branch, False, False)
     if not res.ok:
         # A failed agent run must not ship: no commit, no gate, no PR — the
         # error tail goes to the issue for the human, the branch stays local.
