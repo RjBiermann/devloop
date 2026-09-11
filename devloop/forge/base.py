@@ -63,6 +63,12 @@ class Forge:
     def pr_comment(self, pr_number: int, body: str) -> None:
         raise NotImplementedError
 
+    def pr_for_branch(self, branch: str) -> int | None:
+        """Number of the open PR with this head branch, if any. An agent may
+        self-deliver (its own commit + push + gh pr create) — the pipeline
+        must recognize that and honor it, not report it as a failure."""
+        return None
+
     def pr_diff(self, branch: str) -> str:
         """Unified diff of branch vs the default branch (for AI review)."""
         return ""

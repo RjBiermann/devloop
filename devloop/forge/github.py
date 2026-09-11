@@ -62,6 +62,12 @@ class GitHub(Forge):
     def pr_comment(self, pr_number: int, body: str) -> None:
         _run(["gh", "pr", "comment", str(pr_number), "-R", self.repo, "--body", body])
 
+    def pr_for_branch(self, branch: str) -> int | None:
+        out = _run(["gh", "pr", "list", "-R", self.repo, "--head", branch,
+                    "--state", "open", "--json", "number", "--jq", "[.[0].number]"])
+        nums = json.loads(out or "[]")
+        return int(nums[0]) if nums else None
+
     def pr_diff(self, branch: str) -> str:
         default = _run(["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"]).strip()
         return _run(["git", "diff", f"{default}...{branch}"])
