@@ -145,38 +145,47 @@ def process_issue(cfg: Config, forge: Forge, runtime: AgentRuntime, issue: Issue
                       f"agent run FAILED — no PR opened. tail:\n```\n{res.output[-800:]}\n```")
         return Outcome(issue.number, branch, False, False)
     gate_ok = True
-    if cfg.pipeline.verify:
-        gate_ok = run_verify(cfg.pipeline.verify)
-    existing = forge.pr_for_branch(branch)
-    if not existing and not forge.commit_all(
-            f"devloop({kind}): fixes #{issue.number} [agent: {runtime.name}]"):
-        # No diff AND no PR — nothing delivered. The agent said something —
-        # that's the finding (question, verdict, or stall); surface it.
+    try:
+        if cfg.pipeline.verify:
+            gate_ok = run_verify(cfg.pipeline.verify)
+        existing = forge.pr_for_branch(branch)
+        if not existing and not forge.commit_all(
+                f"devloop({kind}): fixes #{issue.number} [agent: {runtime.name}]"):
+            # No diff AND no PR — nothing delivered. The agent said something —
+            # that's the finding (question, verdict, or stall); surface it.
+            forge.comment(issue.number,
+                          f"agent made NO changes — no PR opened. agent output tail:\n"
+                          f"```\n{res.output[-1200:]}\n```")
+            return Outcome(issue.number, branch, False, False)
+        if existing:
+            # Agent self-delivered (own commit, push, PR). Honor it: gate already
+            # ran above; skip open_pr, correct the bookkeeping.
+            forge.comment(issue.number,
+                          f"Work delivered on `{branch}` — gate "
+                          f"{'PASS' if gate_ok else 'FAIL'}. (agent self-delivered #{existing})")
+        else:
+            forge.open_pr(
+                branch,
+                title=f"devloop({kind}): {issue.title} (#{issue.number})",
+                body=(
+                    f"Closes #{issue.number}\n\n"
+                    f"- agent: `{runtime.name}`\n"
+                    f"- gate: {'PASS' if gate_ok else 'FAIL'}"
+                    + (f" (`{cfg.pipeline.verify}`)" if cfg.pipeline.verify else " (none configured)")
+                    + "\n\nHuman merge required — agents never merge."
+                    + "\n\n## Agent report\n\n" + res.output[-4000:].strip()
+                ),
+            )
+            forge.comment(issue.number, f"Work delivered on `{branch}` — gate {'PASS' if gate_ok else 'FAIL'}.")
+        review_pr(cfg, forge, runtime, issue.number, branch)
+    except Exception as e:
+        # Delivery-stage failure (gate, commit, PR creation): the agent did
+        # its work but the pipeline could not ship it — tell the human here,
+        # not just on the runner's stderr.
         forge.comment(issue.number,
-                      f"agent made NO changes — no PR opened. agent output tail:\n"
-                      f"```\n{res.output[-1200:]}\n```")
+                      f"delivery FAILED ({type(e).__name__}) — no PR opened. tail:\n"
+                      f"```\n{str(e)[-800:]}\n```")
         return Outcome(issue.number, branch, False, False)
-    if existing:
-        # Agent self-delivered (own commit, push, PR). Honor it: gate already
-        # ran above; skip open_pr, correct the bookkeeping.
-        forge.comment(issue.number,
-                      f"Work delivered on `{branch}` — gate "
-                      f"{'PASS' if gate_ok else 'FAIL'}. (agent self-delivered #{existing})")
-    else:
-        forge.open_pr(
-            branch,
-            title=f"devloop({kind}): {issue.title} (#{issue.number})",
-            body=(
-                f"Closes #{issue.number}\n\n"
-                f"- agent: `{runtime.name}`\n"
-                f"- gate: {'PASS' if gate_ok else 'FAIL'}"
-                + (f" (`{cfg.pipeline.verify}`)" if cfg.pipeline.verify else " (none configured)")
-                + "\n\nHuman merge required — agents never merge."
-                + "\n\n## Agent report\n\n" + res.output[-4000:].strip()
-            ),
-        )
-        forge.comment(issue.number, f"Work delivered on `{branch}` — gate {'PASS' if gate_ok else 'FAIL'}.")
-    review_pr(cfg, forge, runtime, issue.number, branch)
     return Outcome(issue.number, branch, res.ok, gate_ok)
 
 
