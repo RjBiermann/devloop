@@ -91,13 +91,24 @@ class GitHub(Forge):
         _run(["git", "checkout", "-B", branch, default])
         _run(["git", "push", "-u", "origin", branch])
 
-    def commit_all(self, message: str) -> None:
+    def commit_all(self, message: str) -> bool:
+        """Commit + push all changes. Returns False when nothing changed —
+        an agent run that produces no diff is a failed delivery, not a
+        silent success (callers report the agent's output to the issue)."""
         _run(["git", "add", "-A"])
         r = subprocess.run(["git", "diff", "--cached", "--quiet"])
         if r.returncode == 0:
-            return  # nothing staged; empty run
+            # nothing staged — but the agent may have committed itself
+            # (prompts say "leave the work committed"). Push unpushed commits.
+            ahead = subprocess.run(["git", "rev-list", "--count", "@{u}..HEAD"],
+                                   capture_output=True, text=True)
+            if ahead.returncode == 0 and ahead.stdout.strip() not in {"", "0"}:
+                _run(["git", "push"])
+                return True
+            return False  # genuinely empty run
         _run(["git", "commit", "-m", message])
         _run(["git", "push"])
+        return True
 
     def open_pr(self, branch: str, title: str, body: str) -> None:
         _run(["gh", "pr", "create", "--head", branch, "--title", title, "--body", body])
