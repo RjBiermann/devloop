@@ -2,10 +2,10 @@ from .base import AgentRuntime  # noqa: F401
 
 
 class OpenCode(AgentRuntime):
-    name = "opencode"
 
     def __init__(self, argv: list[str] | None = None) -> None:
         self._argv = argv or ["opencode", "run"]
+        self.name = self._argv[0]  # report the binary actually run, not a guess
 
     def argv(self) -> list[str]:
         return self._argv
