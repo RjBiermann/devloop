@@ -232,6 +232,19 @@ def review_pr(cfg: Config, forge: Forge, runtime: AgentRuntime, pr_number: int, 
             return
 
 
+FAILURE_MARKERS = (
+    "agent run FAILED", "agent made NO changes", "delivery FAILED"
+)
+
+
+def failure_count(forge: Forge, issue: Issue) -> int:
+    """Past failed attempts, counted from the issue's own comment ledger —
+    no extra state. Guards the scheduled sweeps against burning tokens on
+    a poison task forever: after pipeline.max_attempts, a human re-labels."""
+    return sum(1 for c in forge.comments(issue.number)
+               if any(c.body.startswith(m) for m in FAILURE_MARKERS))
+
+
 def run_once(cfg: Config, forge: Forge, runtime: AgentRuntime) -> list[Outcome]:
     open_heads = forge.open_pr_head_branches()
     devloop_heads = [h for h in open_heads if h.startswith("devloop/")]
@@ -253,6 +266,10 @@ def run_once(cfg: Config, forge: Forge, runtime: AgentRuntime) -> list[Outcome]:
     out = []
     for issue in forge.issues_with_labels(cfg.labels.triggers):
         if f"devloop/issue-{issue.number}" in delivered:
+            continue
+        if failure_count(forge, issue) >= cfg.pipeline.max_attempts:
+            print(f"#{issue.number}: {failure_count(forge, issue)} failed attempts — "
+                  "skipped; re-label to retry", file=sys.stderr)
             continue
         try:
             out.append(process_issue(cfg, forge, runtime, issue))

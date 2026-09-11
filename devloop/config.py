@@ -35,6 +35,7 @@ class Pipeline:
     review_rounds: int = 2
     poll_seconds: int = 300
     timeout: int = 1800
+    max_attempts: int = 3  # failures allowed per issue before it needs a human re-label
     max_parallel: int = 1  # concurrent builds; 1 = serial, zero conflicts by construction
 
 
