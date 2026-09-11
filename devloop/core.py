@@ -177,7 +177,8 @@ def process_issue(cfg: Config, forge: Forge, runtime: AgentRuntime, issue: Issue
                 ),
             )
             forge.comment(issue.number, f"Work delivered on `{branch}` — gate {'PASS' if gate_ok else 'FAIL'}.")
-        review_pr(cfg, forge, runtime, issue.number, branch)
+        pr_num = existing or forge.pr_for_branch(branch)
+        review_pr(cfg, forge, runtime, pr_num, branch)
     except Exception as e:
         # Delivery-stage failure (gate, commit, PR creation): the agent did
         # its work but the pipeline could not ship it — tell the human here,
@@ -201,7 +202,7 @@ REVIEW_PROMPT = (
 )
 
 
-def review_pr(cfg: Config, forge: Forge, runtime: AgentRuntime, number: int, branch: str) -> None:
+def review_pr(cfg: Config, forge: Forge, runtime: AgentRuntime, pr_number: int, branch: str) -> None:
     """AI pre-review rounds (pipeline.review_rounds). Findings only — no
     auto-fix in v0.1: a human reads them on the PR. Stops early on LGTM."""
     for rnd in range(1, cfg.pipeline.review_rounds + 1):
@@ -209,9 +210,9 @@ def review_pr(cfg: Config, forge: Forge, runtime: AgentRuntime, number: int, bra
             REVIEW_PROMPT.format(diff=forge.pr_diff(branch)[:40000]),
             cwd=".", timeout=cfg.pipeline.timeout)
         if not res.ok:
-            forge.pr_comment(number, f"AI pre-review round {rnd}: reviewer run failed.")
+            forge.pr_comment(pr_number, f"AI pre-review round {rnd}: reviewer run failed.")
             return
-        forge.pr_comment(number, f"**AI pre-review, round {rnd}/{cfg.pipeline.review_rounds}**\n\n"
+        forge.pr_comment(pr_number, f"**AI pre-review, round {rnd}/{cfg.pipeline.review_rounds}**\n\n"
                                  + res.output.strip()[-4000:])
         if "LGTM" in res.output[-200:].upper():
             return
