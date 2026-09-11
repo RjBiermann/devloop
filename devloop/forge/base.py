@@ -73,6 +73,10 @@ class Forge:
         """Unified diff of branch vs the default branch (for AI review)."""
         return ""
 
+    def pr_diff_by_number(self, pr_number: int) -> str:
+        """Unified diff of a PR by number (review-by-number mode)."""
+        return ""
+
     # --- human-only operations: blocked in the base -----------------------
     def merge(self, pr_number: int) -> None:
         self._human_only("merge")

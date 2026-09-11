@@ -65,6 +65,20 @@ def cmd_spec(args: argparse.Namespace) -> None:
     print(f"#{args.issue}: {phase} → {new_phase}")
 
 
+def cmd_review(args: argparse.Namespace) -> None:
+    """AI review rounds on any open PR, on demand. Customize what the
+    reviewer looks for via skills/pre-review/SKILL.md; rounds via
+    pipeline.review_rounds (0 = off)."""
+    cfg = load()
+    if cfg.pipeline.review_rounds < 1:
+        print("review disabled: pipeline.review_rounds = 0")
+        return
+    _warn_bad_skills()
+    forge, runtime = _runtime(cfg)
+    review_pr(cfg, forge, runtime, args.pr)
+    print(f"reviewed PR #{args.pr}: {cfg.pipeline.review_rounds} round(s) posted")
+
+
 def cmd_watch(_args: argparse.Namespace) -> None:
     cfg = load()
     print(f"watching {cfg.repo} every {cfg.pipeline.poll_seconds}s — ctrl-c to stop")
@@ -81,10 +95,13 @@ def main() -> None:
     ap = argparse.ArgumentParser(prog="devloop", description=__doc__)
     ap.add_argument("--version", action="version", version=__version__)
     sub = ap.add_subparsers(required=True)
-    for name, fn in [("init", cmd_init), ("once", cmd_once), ("watch", cmd_watch), ("spec", cmd_spec)]:
+    for name, fn in [("init", cmd_init), ("once", cmd_once), ("watch", cmd_watch),
+                     ("spec", cmd_spec), ("review", cmd_review)]:
         s = sub.add_parser(name)
         s.set_defaults(fn=fn)
         if name == "spec":
             s.add_argument("issue", type=int, help="issue number to refine")
+        if name == "review":
+            s.add_argument("pr", type=int, help="PR number to review")
     args = ap.parse_args()
     args.fn(args)

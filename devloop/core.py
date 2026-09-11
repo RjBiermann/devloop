@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 
 from .config import Config
 from .forge import Forge, Issue
@@ -202,13 +203,26 @@ REVIEW_PROMPT = (
 )
 
 
-def review_pr(cfg: Config, forge: Forge, runtime: AgentRuntime, pr_number: int, branch: str) -> None:
-    """AI pre-review rounds (pipeline.review_rounds). Findings only — no
-    auto-fix in v0.1: a human reads them on the PR. Stops early on LGTM."""
+def review_prompt(cfg: Config) -> str:
+    """Base review prompt + repo-specific guidance from skills/pre-review/
+    SKILL.md — the customization point: repos edit that file to shape what
+    the reviewer looks for, without touching devloop code."""
+    p = Path("skills/pre-review/SKILL.md")
+    if p.exists():
+        return REVIEW_PROMPT + "\n\n## Repo-specific review guidance\n" + p.read_text()
+    return REVIEW_PROMPT
+
+
+def review_pr(cfg: Config, forge: Forge, runtime: AgentRuntime, pr_number: int, branch: str = "") -> None:
+    """AI pre-review rounds (pipeline.review_rounds) on one PR. Findings only
+    — no auto-fix: a human reads them on the PR. Stops early on LGTM.
+    branch = head branch when known (build flow); empty = review-by-number
+    (`devloop review <pr>`), diff fetched from the forge."""
+    prompt = review_prompt(cfg)
     for rnd in range(1, cfg.pipeline.review_rounds + 1):
-        res = runtime.run(
-            REVIEW_PROMPT.format(diff=forge.pr_diff(branch)[:40000]),
-            cwd=".", timeout=cfg.pipeline.timeout)
+        diff = forge.pr_diff(branch) if branch else forge.pr_diff_by_number(pr_number)
+        res = runtime.run(prompt.format(diff=diff[:40000]),
+                          cwd=".", timeout=cfg.pipeline.timeout)
         if not res.ok:
             forge.pr_comment(pr_number, f"AI pre-review round {rnd}: reviewer run failed.")
             return
