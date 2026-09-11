@@ -48,7 +48,10 @@ class Forge:
         """Create `branch` from the default branch and check it out."""
         raise NotImplementedError
 
-    def commit_all(self, message: str) -> None:
+    def commit_all(self, message: str) -> bool:
+        """Commit + push all changes. Returns False when nothing changed —
+        an agent run that produces no diff is a failed delivery, not a
+        silent success (callers report the agent's output to the issue)."""
         raise NotImplementedError
 
     def open_pr(self, branch: str, title: str, body: str) -> None:

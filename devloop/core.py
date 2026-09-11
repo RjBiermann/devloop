@@ -139,7 +139,13 @@ def process_issue(cfg: Config, forge: Forge, runtime: AgentRuntime, issue: Issue
     gate_ok = True
     if cfg.pipeline.verify:
         gate_ok = run_verify(cfg.pipeline.verify)
-    forge.commit_all(f"devloop({kind}): fixes #{issue.number} [agent: {runtime.name}]")
+    if not forge.commit_all(f"devloop({kind}): fixes #{issue.number} [agent: {runtime.name}]"):
+        # No diff = no delivery. The agent said something — that's the
+        # finding (question, verdict, or stall); surface it to the human.
+        forge.comment(issue.number,
+                      f"agent made NO changes — no PR opened. agent output tail:\n"
+                      f"```\n{res.output[-1200:]}\n```")
+        return Outcome(issue.number, branch, False, False)
     forge.open_pr(
         branch,
         title=f"devloop({kind}): {issue.title} (#{issue.number})",
