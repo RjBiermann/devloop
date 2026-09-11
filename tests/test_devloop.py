@@ -234,7 +234,7 @@ def test_skillcheck_warns_and_never_blocks():
         assert "bad-desc" in text and "description" in text
         assert "Bad_Name!" in text
         assert "no frontmatter" in text
-        assert validate_skills([root / "nonexistent"]) != []  # missing path warns
+        assert validate_skills([root / "nonexistent"]) == []  # missing path is normal, no warning
 
 
 def test_access_mode_typo_fails_loudly():
