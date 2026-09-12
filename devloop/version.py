@@ -23,8 +23,8 @@ def next_version(tag: str, minor: bool = False) -> str:
 
 def set_version(version: str) -> None:
     text = _PYPROJECT.read_text()
-    new = re.sub(r'(?m)^version = ".*"$', f'version = "{version}"', text, count=1)
-    if new == text:
+    new, n = re.subn(r'(?m)^version = ".*"$', f'version = "{version}"', text, count=1)
+    if n != 1:
         raise SystemExit("pyproject.toml: no `version = \"...\"` line matched")
     _PYPROJECT.write_text(new)
 

@@ -684,6 +684,8 @@ def test_version_bump():
         raise AssertionError("missing v prefix should fail loudly")
     except SystemExit:
         pass
+    from devloop.version import set_version
+    set_version("0.3.0")  # no-change rewrite must not fail
 
 
 if __name__ == "__main__":
