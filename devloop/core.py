@@ -137,6 +137,13 @@ def process_issue(cfg: Config, forge: Forge, runtime: AgentRuntime, issue: Issue
                   workdir: str = ".") -> Outcome:
     kind = cfg.kind_for(issue.labels)  # raises if triggers are not exclusive
     branch = f"devloop/issue-{issue.number}"
+    # progress heartbeat: the issue timeline shows when a build starts and
+    # which attempt this is — comments are free, silence is not (a 30-min
+    # agent run with no visible start looks identical to a broken pipeline)
+    forge.comment(issue.number,
+                  f"build started — attempt {failure_count(forge, issue) + 1}/"
+                  f"{cfg.pipeline.max_attempts}, kind `{kind}`, agent `{runtime.name}`, "
+                  f"branch `{branch}`")
     forge.start_work(issue.number, branch, workdir)
     res = None
     try:
