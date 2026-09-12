@@ -477,6 +477,94 @@ def test_review_rounds_carry_prior_findings():
     assert "Your earlier findings" in seen[1]
 
 
+def test_repair_pushes_gates_and_verifies():
+    """The repair loop: fixer → gate → push → one verification round.
+    LGTM ends it; fresh findings feed the next attempt; the verify gate
+    failing blocks the push; the budget exhausts loudly, never silently."""
+    from devloop.repair import repair_pr
+    from devloop.forge.base import Comment
+
+    class RepairForge:
+        def __init__(self, gate_ok=True):
+            self.gate_ok, self.pushed, self.notes = gate_ok, 0, []
+
+        def pr_diff_by_number(self, n): return f"diff-v{len(self.notes)}"
+
+        def pr_comments(self, n): return [Comment("human", "out of scope — tracked in #12")]
+
+        def pr_comment(self, n, body): self.notes.append(body)
+
+        def commit_all(self, msg, workdir):
+            self.pushed += 1
+            return True
+
+    class R:
+        name = "fake"
+
+        def __init__(self, outputs):
+            self.outputs, self.calls = list(outputs), []
+
+        def run(self, prompt, cwd, timeout):
+            self.calls.append((prompt, cwd))
+            return type("Res", (), {"ok": True, "output": self.outputs.pop(0)})()
+
+    # fixer saw findings + thread + repo guidance; verifier judged a FRESH diff
+    f = RepairForge()
+    r = R(["fixed the thing", "LGTM"])
+    assert repair_pr(Config(repo="o/r", pipeline=Pipeline(repair_rounds=1)),
+                     f, r, 55, "devloop/issue-9", "wt", "t", "b", "P0: broken") == ""
+    assert "P0: broken" in r.calls[0][0] and "out of scope" in r.calls[0][0]
+    assert "Repo-specific repair guidance" in r.calls[0][0]  # skills/repair carried in
+    assert f.pushed == 1
+    assert "diff-v1" in r.calls[1][0]      # verifier saw the post-fix diff
+    assert "AI verify after repair 1" in f.notes[-1]
+
+    # unresolved findings: budget exhausts, findings returned for the human
+    f = RepairForge()
+    r = R(["fixed half", "P1: still broken", "fixed more", "P1: still broken"])
+    out = repair_pr(Config(repo="o/r", pipeline=Pipeline(repair_rounds=2)),
+                    f, r, 55, "devloop/issue-9", "wt", "t", "b", "P1: bad")
+    assert out == "P1: still broken" and f.pushed == 2 and len(r.calls) == 4
+    assert "repair budget exhausted" in f.notes[-1]
+
+    # gate fail: no push, findings stay open (workdir="." so the gate has a cwd)
+    f = RepairForge(gate_ok=False)
+    r = R(["fixed the thing"])
+    cfg = Config(repo="o/r", pipeline=Pipeline(repair_rounds=1, verify="false"))
+    assert repair_pr(cfg, f, r, 55, "devloop/issue-9", ".", "t", "b", "P0: broken") == "P0: broken"
+    assert f.pushed == 0 and "gate FAILED" in f.notes[-1]
+
+
+def test_build_flow_hands_review_findings_to_repair():
+    """LGTM review → no repair; findings + repair_rounds → repair runs."""
+    import devloop.core as core
+
+    calls = []
+
+    def fake_review(cfg, forge, runtime, pr, branch, issue_title="", issue_body=""):
+        calls.append(("review", issue_title))
+        return "" if issue_title == "lgtm" else "P1: wrong"
+
+    def fake_repair(cfg, forge, runtime, pr, branch, workdir, t, b, findings):
+        calls.append(("repair", findings))
+
+    review_pr, repair_pr = core.review_pr, core.repair_pr
+    core.review_pr, core.repair_pr = fake_review, fake_repair
+    try:
+        runtime = type("R", (), {"name": "fake",
+            "run": lambda self, *a, **k: type("Res", (), {"ok": True, "output": "work"})()})()
+        for title in ("finds", "lgtm"):  # findings → repair; LGTM → review only
+            forge = _cmd_forge()
+            forge.start_work = lambda *a, **k: None
+            forge.commit_all = lambda msg, workdir: True
+            issue = forge.issue(9)
+            issue.title = title
+            core.process_issue(Config(repo="o/r"), forge, runtime, issue, workdir="wt")
+    finally:
+        core.review_pr, core.repair_pr = review_pr, repair_pr
+    assert calls == [("review", "finds"), ("repair", "P1: wrong"), ("review", "lgtm")]
+
+
 def test_comment_commands():
     import devloop.core as core
     from devloop.config import Config
@@ -604,6 +692,8 @@ if __name__ == "__main__":
     test_failure_budget_resets_on_retry()
     test_ledger_producer_and_parser_agree()
     test_review_rounds_carry_prior_findings()
+    test_repair_pushes_gates_and_verifies()
+    test_build_flow_hands_review_findings_to_repair()
     test_comment_commands()
     test_rebase_stage_rebases_clean_and_rebuilds_conflicts()
     print("all checks passed")

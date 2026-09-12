@@ -31,6 +31,7 @@ class Runtime:
 class Pipeline:
     verify: str = ""
     review_rounds: int = 2
+    repair_rounds: int = 1   # AI repair attempts on review findings; 0 = findings go straight to the human
     poll_seconds: int = 300
     timeout: int = 1800
     max_attempts: int = 3  # failures allowed per issue before it needs a human re-label

@@ -5,7 +5,10 @@ One interface function: review_pr(). Behind it live the review prompt
 issue), per-round diff injection, the PR-thread read, prior-findings
 carry between rounds, and the LGTM early-exit. Review is NOT delivery —
 it runs after a PR exists and is reachable on its own (`devloop review`,
-`/review`). A human reads the findings; the reviewer never changes code.
+`/review`). Review is NOT repair — it finds, repair.py acts. A human
+reads the findings; the reviewer never changes code. Returns the final
+round's findings ("" on LGTM or failed run) — the build flow hands them
+to repair.
 """
 
 import re
@@ -44,7 +47,7 @@ def review_prompt(cfg: Config, issue_title: str = "", issue_body: str = "") -> s
 def review_pr(cfg: Config, forge: Forge, runtime: AgentRuntime, pr_number: int,
               branch: str = "", issue_title: str = "", issue_body: str = "") -> None:
     """AI pre-review rounds (pipeline.review_rounds) on one PR. Stops early
-    on LGTM.
+    on LGTM. Returns the last round's findings ("" on LGTM or failed run).
     branch = head branch when known (build flow); empty = review-by-number
     (`devloop review <pr>`), diff fetched from the forge.
     issue_title/issue_body: the spec the diff is judged against (the builder
@@ -77,9 +80,10 @@ def review_pr(cfg: Config, forge: Forge, runtime: AgentRuntime, pr_number: int,
         res = runtime.run(round_prompt, cwd=".", timeout=cfg.pipeline.timeout)
         if not res.ok:
             forge.pr_comment(pr_number, f"AI pre-review round {rnd}: reviewer run failed.")
-            return
+            return ""
         prior.append(res.output.strip())
         forge.pr_comment(pr_number, f"**AI pre-review, round {rnd}/{cfg.pipeline.review_rounds}**\n\n"
                                  + res.output.strip()[-4000:])
         if "LGTM" in res.output[-200:].upper():
-            return
+            return ""
+    return prior[-1]

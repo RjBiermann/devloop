@@ -13,6 +13,7 @@ from . import ledger
 from .config import Config
 from .delivery import Outcome, deliver
 from .forge import Forge, Issue
+from .repair import repair_pr
 from .review import review_pr
 from .runtime import AgentRuntime
 
@@ -73,8 +74,11 @@ def process_issue(cfg: Config, forge: Forge, runtime: AgentRuntime, issue: Issue
         return Outcome(issue.number, branch, False)
     out = deliver(cfg, forge, runtime, issue, branch, workdir, res.output)
     if out.pr:
-        review_pr(cfg, forge, runtime, out.pr, branch,
-                  issue_title=issue.title, issue_body=issue.body)
+        findings = review_pr(cfg, forge, runtime, out.pr, branch,
+                             issue_title=issue.title, issue_body=issue.body)
+        if findings and cfg.pipeline.repair_rounds > 0:
+            repair_pr(cfg, forge, runtime, out.pr, branch, workdir,
+                      issue.title, issue.body, findings)
     return out
 
 

@@ -1,0 +1,5 @@
+# Independent repair phase instead of a self-fixing reviewer
+
+Review findings used to be terminal: a human read them. When we decided the AI should also fix what it finds, the obvious shortcut was letting the reviewer edit the code itself — but the agent that missed a bug is unlikely to catch it while patching, so review would grade its own homework. Instead, review stays findings-only and a separate repair session (`devloop/repair.py`) consumes the findings, pushes minimal fix commits behind the verify gate, and a single verification review round checks the result. The two phases have separate prompts, separate skills, and separate budgets (`review_rounds` vs `repair_rounds`).
+
+Considered and rejected: reviewer-fixes-itself (simpler, loses independence) and re-entering findings as `ai-fix` issues (the human must re-label, defeating the point of sparing them). Scope-creep findings are deliberately not repairable — deleting another agent's work is a judgment call that stays with the human.

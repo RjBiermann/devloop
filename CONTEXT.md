@@ -36,4 +36,18 @@ which live the review prompt (base template + repo guidance from
 PR-thread read, prior-findings carry between rounds, and the LGTM early-exit.
 Review runs after a PR exists and is reachable on its own (`devloop review`,
 `/review`). Findings only: a human reads them; the reviewer never changes
-code.
+code. Review returns its final findings — the build flow hands them to Repair.
+
+### Repair
+
+Acting on review findings before a human reads them. The **repair module**
+(`devloop/repair.py`) owns this interface: one function, `repair_pr()`, behind
+which live the fixer prompt (findings + diff + spec issue + PR thread, with
+repo guidance from `skills/repair/SKILL.md`), the verify gate before any push,
+the commit-and-push (the fixer commits, the pipeline pushes), and the
+one-round verification re-review that decides fixed vs still open. Repair is
+not Review — review finds, repair acts; review stays findings-only. Repair is
+not Delivery — it never opens, closes, or merges a PR; it only pushes commits
+to the PR branch that already exists. Not the same as the `ai-fix` label:
+`ai-fix` is an issue-level trigger a human applies to start a build; Repair is
+PR-level upkeep that runs inside one.

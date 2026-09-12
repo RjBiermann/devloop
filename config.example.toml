@@ -19,6 +19,9 @@ argv = ["opencode", "run"] # prompt is appended as the final argument
 [pipeline]
 verify = ""              # the gate. e.g. "make verify" — empty = skip
 review_rounds = 2          # AI pre-review rounds before human review
+repair_rounds = 1          # AI repair attempts on review findings before
+                           # the human sees them; 0 = findings go straight
+                           # to the human
 max_parallel = 1           # concurrent builds. Each build gets its own git
                            # worktree; deliveries that would overlap files with
                            # an open devloop PR are deferred to a later sweep,

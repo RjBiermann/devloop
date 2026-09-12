@@ -3,6 +3,19 @@
 All notable changes to devloop. Semver-ish: minor bumps add features,
 patch bumps fix behavior bugs. Tag = release.
 
+## v0.3.0 — repair phase
+
+- `pipeline.repair_rounds` (default 1, 0 = off): after pre-review finds
+  issues, an independent repair session acts on the findings — minimal
+  fixes, verify gate before push, one verification review round per
+  repair, attempt cap before the human takes over
+- Review stays findings-only; `review_pr()` now returns its final
+  findings ("" on LGTM) for repair to consume
+- New `skills/repair/SKILL.md` customization point; `skills/pre-review`
+  clarified back to findings-only (its old "fixes as commits" step
+  contradicted the reviewer prompt — this resolves it)
+- ADR 0001: why repair is a separate phase, not a self-fixing reviewer
+
 ## v0.2.10 — comment commands + review context
 
 - `/retry <issue>` and `/review <pr>` comment commands (access-gated;
