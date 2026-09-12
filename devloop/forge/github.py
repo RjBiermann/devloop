@@ -23,6 +23,11 @@ def _run(args: list[str], cwd: str = ".") -> str:
 class GitHub(Forge):
     def __init__(self, repo: str) -> None:
         self.repo = repo
+        # checkout registry: issue number → worktree path. start_work and
+        # finish_work are the only code that creates or deletes these, so
+        # the adapter can never rmtree a path it did not create itself
+        # (the old caller-supplied-workdir interface allowed rmtree('.')).
+        self._checkouts: dict[int, str] = {}
 
     def issues_with_labels(self, labels: list[str]) -> list[Issue]:
         issues: list[Issue] = []
@@ -132,14 +137,18 @@ class GitHub(Forge):
         return self._permission(author) in {"admin", "maintain", "write"}
 
     # --- git side (assumes the working tree IS the target repo) ----------
-    def start_work(self, number: int, branch: str, workdir: str = ".") -> None:
+    def start_work(self, number: int, branch: str) -> str:
+        """Create the build checkout: one git worktree per issue, path owned
+        by the adapter and registered for finish_work."""
         _run(["git", "fetch", "origin"])
         # heal crash leftovers: an uncleanly-removed worktree leaves admin
         # entries that block worktree add on the same branch/path forever
         _run(["git", "worktree", "prune"])
-        shutil.rmtree(workdir, ignore_errors=True)
+        parent = tempfile.mkdtemp(prefix=f"devloop-{number}-")
+        workdir = parent + "/tree"
         default = _run(["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"]).strip()
         _run(["git", "worktree", "add", "-B", branch, workdir, default])
+        self._checkouts[number] = workdir
         # force when the remote branch already exists (a deferred or abandoned
         # build): this branch is devloop-owned, the worktree is fresh from main
         exists = subprocess.run(
@@ -148,6 +157,17 @@ class GitHub(Forge):
         push = ["git", "push", "--force", "-u", "origin", branch] if exists \
             else ["git", "push", "-u", "origin", branch]
         _run(push, cwd=workdir)
+        return workdir
+
+    def finish_work(self, number: int) -> None:
+        """Remove this issue's checkout — only ever a path this adapter
+        created. Deleting caller-supplied paths (the old interface allowed
+        rmtree('.')) is structurally impossible."""
+        path = self._checkouts.pop(number, None)
+        if path is None:
+            return  # never started (normal) or already finished
+        shutil.rmtree(os.path.dirname(path), ignore_errors=True)
+        _run(["git", "worktree", "prune"])
 
     def commit_all(self, message: str, workdir: str = ".") -> bool:
         """Commit + push all changes. Returns True when the branch carries

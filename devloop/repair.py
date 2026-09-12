@@ -92,7 +92,7 @@ def repair_pr(cfg: Config, forge: Forge, runtime: AgentRuntime, pr_number: int,
         # now on the branch, not the diff the fixer was handed
         vres = runtime.run(VERIFY_PROMPT.replace("{findings}", findings)
                                      .replace("{diff}", forge.pr_diff_by_number(pr_number)[:40000]),
-                           cwd=".", timeout=cfg.pipeline.timeout)
+                           cwd=workdir, timeout=cfg.pipeline.timeout)
         if vres.ok:
             forge.pr_comment(pr_number, f"**AI verify after repair {rnd}**\n\n"
                                      + vres.output.strip()[-TAIL:])
