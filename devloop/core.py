@@ -248,8 +248,8 @@ def review_prompt(cfg: Config, issue_title: str = "", issue_body: str = "") -> s
     prompt = REVIEW_PROMPT + "\n\n## Repo-specific review guidance\n" + p.read_text() if p.exists() else REVIEW_PROMPT
     return (prompt
             .replace("{issue_title}", issue_title)
-            .replace("{issue_body}", issue_body)
-            .replace("{diff}", ""))
+            .replace("{issue_body}", issue_body))
+    # {diff} stays — review_pr injects it per round
 
 
 def review_pr(cfg: Config, forge: Forge, runtime: AgentRuntime, pr_number: int,

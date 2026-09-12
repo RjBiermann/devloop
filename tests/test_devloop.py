@@ -451,6 +451,7 @@ def test_review_rounds_carry_prior_findings():
 
     core.review_pr(Config(repo="o/r", pipeline=Pipeline(review_rounds=2)), forge, R(), 55)
     assert "finding round 1" in seen[1]     # round 2 saw round 1's findings
+    assert "diff" in seen[0] and seen[0].count("```diff") == 1  # the diff IS injected
     assert "Your earlier findings" in seen[1]
 
 
