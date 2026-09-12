@@ -4,6 +4,14 @@ Domain vocabulary for devloop. Terms here are the words this project uses — do
 
 ## Glossary
 
+### Version
+
+Semver-ish number identifying a release: `Tag = release`, every merge to master
+bumps **patch** by default; the human declares a **minor** when they merge;
+majors stay manual. Version counts merges, not significance — significance is
+the human's call, encoded in the merge, never inferred.
+_Avoid_: bump-as-judgment, release-note generation.
+
 ### Ledger
 
 The issue comment history as state. Failure and reset comments on an issue are

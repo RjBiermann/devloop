@@ -1,0 +1,48 @@
+name: release
+on:
+  push:
+    branches: [master]
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "${{ matrix.python }}" }
+      - run: pip install -e .
+      - run: python3 tests/test_devloop.py
+      - run: python3 -c "import devloop.cli"  # smoke: CLI imports clean
+
+  tag:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }  # full history: git describe needs tags
+      - name: compute next version
+        id: ver
+        run: |
+          LATEST=$(git describe --tags --abbrev=0 2>/dev/null || echo v0.0.0)
+          EXTRA=""
+          if git log -1 --pretty=%s | grep -qi '^minor:'; then EXTRA="--minor"; fi
+          NEXT=$(python3 -m devloop.version --from "$LATEST" $EXTRA)
+          if git rev-parse -q --verify "refs/tags/$NEXT" >/dev/null; then
+            echo "::error::tag $NEXT already exists — refusing to skip silently"
+            exit 1
+          fi
+          echo "tag=$NEXT" >> "$GITHUB_OUTPUT"
+      - name: commit, tag, push
+        run: |
+          git config user.name "devloop-release"
+          git config user.email "actions@users.noreply.github.com"
+          git add pyproject.toml
+          git commit --allow-empty -m "chore: bump version to ${{ steps.ver.outputs.tag }}"
+          git tag "${{ steps.ver.outputs.tag }}"
+          git push origin master "${{ steps.ver.outputs.tag }}"

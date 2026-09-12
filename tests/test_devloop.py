@@ -674,6 +674,18 @@ def test_rebase_stage_rebases_clean_and_rebuilds_conflicts():
     assert ledger.count(f2, type("I", (), {"number": 9})()) == 1
 
 
+def test_version_bump():
+    from devloop.version import next_version
+    assert next_version("v0.3.0") == "v0.3.1"
+    assert next_version("v0.3.0", minor=True) == "v0.4.0"
+    assert next_version("v0.2.17", minor=True) == "v0.3.0"
+    try:
+        next_version("0.3.0")
+        raise AssertionError("missing v prefix should fail loudly")
+    except SystemExit:
+        pass
+
+
 if __name__ == "__main__":
     test_human_only_ops_are_blocked()
     test_spec_state_machine()
@@ -696,5 +708,6 @@ if __name__ == "__main__":
     test_build_flow_hands_review_findings_to_repair()
     test_comment_commands()
     test_rebase_stage_rebases_clean_and_rebuilds_conflicts()
+    test_version_bump()
     print("all checks passed")
 
