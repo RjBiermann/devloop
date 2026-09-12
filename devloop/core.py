@@ -207,13 +207,16 @@ REVIEW_PROMPT = (
 
 
 def review_prompt(cfg: Config, issue_title: str = "", issue_body: str = "") -> str:
-    """Base review prompt (with the spec issue inline — the yardstick) +
-    repo-specific guidance from skills/pre-review/SKILL.md — the
-    customization point: repos edit that file to shape what the reviewer
-    looks for, without touching devloop code."""
+    """Fully substituted review prompt: base template + repo-specific
+    guidance from skills/pre-review/SKILL.md (the customization point) +
+    the spec issue. Substitution is replace-based, not .format — injected
+    content (issue bodies, diffs) may contain braces."""
     p = Path("skills/pre-review/SKILL.md")
     prompt = REVIEW_PROMPT + "\n\n## Repo-specific review guidance\n" + p.read_text() if p.exists() else REVIEW_PROMPT
-    return prompt.format(issue_title=issue_title, issue_body=issue_body)
+    return (prompt
+            .replace("{issue_title}", issue_title)
+            .replace("{issue_body}", issue_body)
+            .replace("{diff}", ""))
 
 
 def review_pr(cfg: Config, forge: Forge, runtime: AgentRuntime, pr_number: int,
@@ -233,6 +236,8 @@ def review_pr(cfg: Config, forge: Forge, runtime: AgentRuntime, pr_number: int,
     prompt = review_prompt(cfg, issue_title, issue_body)
     for rnd in range(1, cfg.pipeline.review_rounds + 1):
         diff = forge.pr_diff(branch) if branch else forge.pr_diff_by_number(pr_number)
+        res = runtime.run(prompt.replace("{diff}", diff[:40000]),
+                          cwd=".", timeout=cfg.pipeline.timeout)
         res = runtime.run(prompt.format(diff=diff[:40000]),
                           cwd=".", timeout=cfg.pipeline.timeout)
         if not res.ok:
