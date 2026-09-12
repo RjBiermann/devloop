@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import ledger
 from .config import Config
 from .forge import Forge, Issue
 from .runtime import AgentRuntime
@@ -141,7 +142,7 @@ def process_issue(cfg: Config, forge: Forge, runtime: AgentRuntime, issue: Issue
     # which attempt this is — comments are free, silence is not (a 30-min
     # agent run with no visible start looks identical to a broken pipeline)
     forge.comment(issue.number,
-                  f"build started — attempt {failure_count(forge, issue) + 1}/"
+                  f"build started — attempt {ledger.count(forge, issue) + 1}/"
                   f"{cfg.pipeline.max_attempts}, kind `{kind}`, agent `{runtime.name}`, "
                   f"branch `{branch}`")
     forge.start_work(issue.number, branch, workdir)
@@ -151,15 +152,12 @@ def process_issue(cfg: Config, forge: Forge, runtime: AgentRuntime, issue: Issue
                           cwd=workdir, timeout=cfg.pipeline.timeout)
     except Exception as e:
         # Timeout/explosion mid-run: no delivery, but the human must know.
-        forge.comment(issue.number,
-                      f"agent run FAILED ({type(e).__name__}) — no PR opened. tail:\n"
-                      f"```\n{str(e)[-800:]}\n```")
+        ledger.failure(forge, issue, "agent", note=f"no PR opened ({type(e).__name__})", tail=str(e))
         return Outcome(issue.number, branch, False, False)
     if not res.ok:
         # A failed agent run must not ship: no commit, no gate, no PR — the
         # error tail goes to the issue for the human, the branch stays local.
-        forge.comment(issue.number,
-                      f"agent run FAILED — no PR opened. tail:\n```\n{res.output[-800:]}\n```")
+        ledger.failure(forge, issue, "agent", note="no PR opened", tail=res.output)
         return Outcome(issue.number, branch, False, False)
     gate_ok = True
     try:
@@ -178,9 +176,7 @@ def process_issue(cfg: Config, forge: Forge, runtime: AgentRuntime, issue: Issue
         if not existing and not delivered:
             # No diff AND no PR — nothing delivered. The agent said something —
             # that's the finding (question, verdict, or stall); surface it.
-            forge.comment(issue.number,
-                          f"agent made NO changes — no PR opened. agent output tail:\n"
-                          f"```\n{res.output[-1200:]}\n```")
+            ledger.failure(forge, issue, "no-changes", note="no PR opened — agent output tail", tail=res.output)
             return Outcome(issue.number, branch, False, False)
         if not existing:
             # delivery conflict gate: the build's scope is only knowable now —
@@ -196,10 +192,10 @@ def process_issue(cfg: Config, forge: Forge, runtime: AgentRuntime, issue: Issue
                 if other and touched & set(forge.pr_files(other)):
                     conflicts.append(f"#{other} ({head})")
             if conflicts:
-                forge.comment(issue.number,
-                              f"build deferred — branch `{branch}` touches files also "
-                              f"touched by open devloop PR(s) {', '.join(conflicts)}; "
-                              "will retry on a later sweep after they merge")
+                ledger.failure(forge, issue, "deferred",
+                               note=f"branch `{branch}` touches files also touched by "
+                                    f"open devloop PR(s) {', '.join(conflicts)}; "
+                                    "will retry on a later sweep after they merge")
                 return Outcome(issue.number, branch, False, False)
         if existing:
             # Agent self-delivered (own commit, push, PR). Honor it: gate already
@@ -228,9 +224,7 @@ def process_issue(cfg: Config, forge: Forge, runtime: AgentRuntime, issue: Issue
         # Delivery-stage failure (gate, commit, PR creation): the agent did
         # its work but the pipeline could not ship it — tell the human here,
         # not just on the runner's stderr.
-        forge.comment(issue.number,
-                      f"delivery FAILED ({type(e).__name__}) — no PR opened. tail:\n"
-                      f"```\n{str(e)[-800:]}\n```")
+        ledger.failure(forge, issue, "delivery", note=f"no PR opened ({type(e).__name__})", tail=str(e))
         return Outcome(issue.number, branch, False, False)
     return Outcome(issue.number, branch, res.ok, gate_ok)
 
@@ -305,12 +299,6 @@ def review_pr(cfg: Config, forge: Forge, runtime: AgentRuntime, pr_number: int,
             return
 
 
-FAILURE_MARKERS = (
-    "agent run FAILED", "agent made NO changes", "delivery FAILED",
-    "build deferred", "rebase conflict",
-)
-
-RESET_MARKER = "build reset by"
 
 
 def rebase_stale(cfg: Config, forge: Forge, devloop_heads: list[str]) -> None:
@@ -328,23 +316,7 @@ def rebase_stale(cfg: Config, forge: Forge, devloop_heads: list[str]) -> None:
         pr = forge.pr_for_branch(head)
         if pr:
             forge.close_pr(pr, f"rebase onto main conflicts with merged work — rebuilding ({head})")
-        forge.comment(n, f"rebase conflict — PR closed, building again on fresh main ({head})")
-
-
-def failure_count(forge: Forge, issue: Issue) -> int:
-    """Past failed attempts, counted from the issue's own comment ledger —
-    no extra state. Guards the scheduled sweeps against burning tokens on
-    a poison task forever: after pipeline.max_attempts, a human re-labels
-    (or issues `/retry`, which resets the budget from that point).
-    Deferrals count too — a build that keeps losing the conflict gate is
-    re-running its agent each sweep; the cap bounds that spend."""
-    count = 0
-    for c in forge.comments(issue.number):
-        if c.body.startswith(RESET_MARKER):
-            count = 0
-        elif any(c.body.startswith(m) for m in FAILURE_MARKERS):
-            count += 1
-    return count
+        ledger.failure(forge, n, "rebase", note=f"PR closed, building again on fresh main ({head})")
 
 
 def handle_command(cfg: Config, forge: Forge, runtime: AgentRuntime,
@@ -376,7 +348,7 @@ def handle_command(cfg: Config, forge: Forge, runtime: AgentRuntime,
                 # the human sanctioned discarding the delivery — devloop is
                 # executing that command, not judging the work itself
                 forge.close_pr(existing, f"closed by `/retry` from {author} — rebuild incoming")
-            forge.comment(n, f"{RESET_MARKER} `/retry` from {author} — attempt budget cleared, rebuilding")
+            ledger.reset(forge, n, f"`/retry` from {author} — attempt budget cleared, rebuilding")
             process_issue(cfg, forge, runtime, forge.issue(n))
             return f"retried issue #{n}"
         forge.comment(context_number,
@@ -415,8 +387,8 @@ def run_once(cfg: Config, forge: Forge, runtime: AgentRuntime) -> list[Outcome]:
     for issue in forge.issues_with_labels(cfg.labels.triggers):
         if f"devloop/issue-{issue.number}" in delivered:
             continue
-        if failure_count(forge, issue) >= cfg.pipeline.max_attempts:
-            print(f"#{issue.number}: {failure_count(forge, issue)} failed attempts — "
+        if ledger.count(forge, issue) >= cfg.pipeline.max_attempts:
+            print(f"#{issue.number}: {ledger.count(forge, issue)} failed attempts — "
                   "skipped; re-label to retry", file=sys.stderr)
             continue
         candidates.append(issue)

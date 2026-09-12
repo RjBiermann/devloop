@@ -436,10 +436,31 @@ def _cmd_forge(auth_ok=True):
 
 def test_failure_budget_resets_on_retry():
     import devloop.core as core
+    from devloop import ledger
 
     forge = _cmd_forge()
     issue = type("I", (), {"number": 9})()
-    assert core.failure_count(forge, issue) == 1  # only failures after the reset
+    assert ledger.count(forge, issue) == 1  # only failures after the reset
+
+
+def test_ledger_producer_and_parser_agree():
+    """The interface is the test surface: every ledger failure kind feeds
+    count() and lands on one side of the attempt budget."""
+    from devloop import ledger
+
+    notes = []
+
+    class Forge_:
+        def comment(self, n, body): notes.append(body)
+        def comments(self, n): return [Comment("x", b) for b in notes]
+
+    forge, issue = Forge_(), type("I", (), {"number": 1})()
+    for kind in ledger.MARKERS:
+        ledger.failure(forge, issue, kind, note="n", tail="t")
+    assert ledger.count(forge, issue) == len(ledger.MARKERS)
+    ledger.reset(forge, issue, "reason")
+    assert ledger.count(forge, issue) == 0  # reset clears the budget
+    assert notes[-1].startswith(ledger.RESET) and "reason" in notes[-1]
 
 
 def test_review_rounds_carry_prior_findings():
