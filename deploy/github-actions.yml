@@ -8,6 +8,11 @@ on:
     types: [created]
   pull_request:
     types: [closed]
+  push:
+    branches: [master]   # edit to your default branch — a push to main
+                         # immediately runs upkeep (rebase stale PRs,
+                         # rebuild on conflict) instead of waiting for
+                         # the 30-min sweep
   workflow_dispatch:
   schedule:
     - cron: "*/30 * * * *"   # self-healing: pending labels survive skipped/failed runs
@@ -21,6 +26,7 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'schedule' ||
+      github.event_name == 'push' ||
       github.event.label.name == 'ai-fix' ||
       github.event.label.name == 'ai-build' ||
       github.event.label.name == 'ai-remove' ||

@@ -4,6 +4,15 @@ Domain vocabulary for devloop. Terms here are the words this project uses — do
 
 ## Glossary
 
+### Sweep
+
+One pass of `devloop once`: rebase stale devloop PRs onto the default
+branch (rebuilding on conflict), then start queued builds within the
+parallelism budget. The self-healing unit of orchestration — trigger
+labels, comment commands, merged-PR closeouts, and pushes to the default
+branch all just feed the next sweep; the schedule (30-min cron) exists
+only so missed events self-heal, not as the primary trigger.
+
 ### Version
 
 Semver-ish number identifying a release: `Tag = release`, every merge to master
