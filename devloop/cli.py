@@ -12,7 +12,7 @@ from pathlib import Path
 
 from . import __version__
 from .config import load
-from .core import process_spec, run_once, spec_phase
+from .core import handle_command, process_spec, review_pr, run_once, spec_phase
 from .forge import get_forge
 from .runtime import get_runtime
 from .skillcheck import validate_skills
