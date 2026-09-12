@@ -15,4 +15,3 @@ HUMAN_ONLY = frozenset({
     "apply_trigger",  # labels create work; agents never create work
 })
 
-READY_FOR_AGENT = "ready-for-agent"  # mutually exclusive with trigger labels

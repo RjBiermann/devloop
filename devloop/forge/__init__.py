@@ -1,6 +1,4 @@
-from .base import Forge, Issue, GuardrailViolation  # noqa: F401
-
-ADAPTERS: dict[str, type[Forge]] = {}
+from .base import Forge, Issue  # noqa: F401
 
 
 def get_forge(kind: str, repo: str) -> Forge:

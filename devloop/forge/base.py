@@ -93,10 +93,6 @@ class Forge:
         must recognize that and honor it, not report it as a failure."""
         return None
 
-    def pr_diff(self, branch: str) -> str:
-        """Unified diff of branch vs the default branch (for AI review)."""
-        return ""
-
     def pr_diff_by_number(self, pr_number: int) -> str:
         """Unified diff of a PR by number (review-by-number mode)."""
         return ""

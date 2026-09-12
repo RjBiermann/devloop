@@ -70,10 +70,6 @@ class GitHub(Forge):
         nums = json.loads(out or "[]")
         return int(nums[0]) if nums else None
 
-    def pr_diff(self, branch: str) -> str:
-        default = _run(["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"]).strip()
-        return _run(["git", "diff", f"{default}...{branch}"])
-
     def pr_diff_by_number(self, pr_number: int) -> str:
         return _run(["gh", "pr", "diff", str(pr_number), "-R", self.repo])
 
