@@ -125,7 +125,7 @@ def test_run_once_skips_issues_with_open_pr():
 
     orig = core.process_issue
 
-    def spy(cfg, forge, runtime, issue, workdir="."):
+    def spy(cfg, forge, runtime, issue, workdir=None):
         processed.append((issue.number, workdir))
         return type("O", (), {"issue": issue.number, "branch": "", "delivered": True, "gate": True})()
 
@@ -292,6 +292,7 @@ class FlowForge(Forge):
         self.prs = []
         self.notes = []
         self.cwds = []
+        self.finished = []
         self._open_heads = list(open_heads)
         self._pr_files = pr_files or {}
 
@@ -304,8 +305,12 @@ class FlowForge(Forge):
     def pr_for_branch(self, _b):
         return None
 
-    def start_work(self, number, branch, workdir="."):
-        self.cwds.append(workdir)
+    def start_work(self, number, branch):
+        self.cwds.append(f"/fake/wt-{number}")
+        return self.cwds[-1]
+
+    def finish_work(self, number):
+        self.finished.append(number)
 
     def commit_all(self, message, workdir="."):
         return True
@@ -343,8 +348,10 @@ def test_parallel_builds_get_distinct_worktrees():
     out = core.run_once(Config(repo="o/r", pipeline=Pipeline(max_parallel=2)), forge, R())
     assert sorted(o.issue for o in out) == [1, 2]
     assert len(forge.prs) == 2
-    # two distinct private worktrees, neither the shared checkout
+    # two distinct private worktrees, neither the shared checkout —
+    # allocated by the Forge, cleaned up after each build
     assert len(set(forge.cwds)) == 2 and "." not in forge.cwds
+    assert sorted(forge.finished) == [1, 2]
 
 
 def test_conflict_gate_defers_overlapping_builds():
@@ -547,7 +554,6 @@ def test_build_flow_hands_review_findings_to_repair():
 
     def fake_repair(cfg, forge, runtime, pr, branch, workdir, t, b, findings):
         calls.append(("repair", findings))
-
     review_pr, repair_pr = core.review_pr, core.repair_pr
     core.review_pr, core.repair_pr = fake_review, fake_repair
     try:
@@ -555,7 +561,8 @@ def test_build_flow_hands_review_findings_to_repair():
             "run": lambda self, *a, **k: type("Res", (), {"ok": True, "output": "work"})()})()
         for title in ("finds", "lgtm"):  # findings → repair; LGTM → review only
             forge = _cmd_forge()
-            forge.start_work = lambda *a, **k: None
+            forge.start_work = lambda *a, **k: "/fake/wt"
+            forge.finish_work = lambda *a, **k: None
             forge.commit_all = lambda msg, workdir: True
             issue = forge.issue(9)
             issue.title = title
@@ -563,6 +570,59 @@ def test_build_flow_hands_review_findings_to_repair():
     finally:
         core.review_pr, core.repair_pr = review_pr, repair_pr
     assert calls == [("review", "finds"), ("repair", "P1: wrong"), ("review", "lgtm")]
+
+
+def test_braced_issue_body_and_cleanup_on_failure():
+    """Braces in an issue body are data, not format fields (the .format()
+    crash is a regression); and finish_work runs even when the agent run
+    explodes mid-build."""
+    import devloop.core as core
+    from devloop.config import Config
+    from devloop.forge.base import Issue
+
+    class F(Forge):
+        def __init__(self):
+            self.finished, self.notes, self.prs = [], [], []
+
+        def start_work(self, n, branch): return f"/fake/wt-{n}"
+        def finish_work(self, n): self.finished.append(n)
+        def comment(self, n, body): self.notes.append(body)
+        def comments(self, n): return [Comment("x", b) for b in self.notes]
+        def commit_all(self, msg, workdir): return True
+        def pr_for_branch(self, b): return None
+        def open_pr_head_branches(self): return []
+        def branch_files(self, b): return []
+        def open_pr(self, branch, title, body): self.prs.append(branch)
+        def is_owner(self, a): return True
+        def is_maintainer(self, a): return True
+        def is_collaborator(self, a): return True
+
+    issue = Issue(5, "t5", "def f(): return {'a': 1} — braces are data", ["ai-fix"])
+    cfg = Config(repo="o/r", pipeline=Pipeline(review_rounds=0))
+
+    class R:
+        name = "fake"
+        def __init__(self, boom=False): self.boom = boom
+        def run(self, prompt, cwd, timeout):
+            if self.boom:
+                raise TimeoutError()
+            self.prompt, self.cwd = prompt, cwd
+            return type("Res", (), {"ok": True, "output": "work"})()
+
+    # braces survive substitution; the Forge-allocated cwd reaches the agent
+    f, r = F(), R()
+    core.process_issue(cfg, f, r, issue)
+    assert "{'a': 1}" in r.prompt  # body braces intact — .format() would crash
+    assert r.cwd == "/fake/wt-5"
+    assert f.prs == ["devloop/issue-5"]
+    assert f.finished == [5]
+
+    # agent run explodes → failure posted to the issue AND checkout cleaned up
+    f2, b = F(), R(boom=True)
+    out = core.process_issue(cfg, f2, b, issue)
+    assert not out.agent_ok
+    assert any(n.startswith("agent run FAILED") for n in f2.notes)
+    assert f2.finished == [5]
 
 
 def test_comment_commands():
@@ -708,6 +768,7 @@ if __name__ == "__main__":
     test_review_rounds_carry_prior_findings()
     test_repair_pushes_gates_and_verifies()
     test_build_flow_hands_review_findings_to_repair()
+    test_braced_issue_body_and_cleanup_on_failure()
     test_comment_commands()
     test_rebase_stage_rebases_clean_and_rebuilds_conflicts()
     test_version_bump()

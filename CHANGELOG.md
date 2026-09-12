@@ -3,6 +3,22 @@
 All notable changes to devloop. Semver-ish: minor bumps add features,
 patch bumps fix behavior bugs. Tag = release.
 
+## Unreleased — Forge owns its checkouts
+
+- **Forge adapter interface changed** (custom adapters need a two-line
+  update): `start_work(number, branch) -> str` now allocates the build
+  checkout itself and returns its path; callers never name paths. New
+  `finish_work(number)` removes the checkout (no-op when the issue never
+  started). Fixes a live bug: `/retry` ran with the default
+  `workdir="."`, and the old adapter deleted that path — wiping the
+  repo checkout. Deleting caller-supplied paths is now structurally
+  impossible: the adapter only ever removes checkouts it created.
+- Fixed repair's verification round running in the default checkout
+  (`cwd="."`) instead of the PR branch's worktree
+- Fixed build prompts using `.format()`: braces in an issue body
+  (`def f(): return {'a': 1}`) crashed the build before the agent ran;
+  substitution is now replace-based, like review and repair
+
 ## v0.3.0 — repair phase
 
 - `pipeline.repair_rounds` (default 1, 0 = off): after pre-review finds

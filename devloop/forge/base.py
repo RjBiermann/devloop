@@ -42,10 +42,17 @@ class Forge:
         raise NotImplementedError
 
     # --- write side ------------------------------------------------------
-    def start_work(self, number: int, branch: str, workdir: str = ".") -> None:
-        """Create `branch` from the default branch, in its own git worktree
-        at `workdir` (parallel builds each get a private checkout — agents
-        must never share a working tree)."""
+    def start_work(self, number: int, branch: str) -> str:
+        """Create `branch` from the default branch in a private checkout
+       (parallel builds must never share a working tree — agents race on
+        git state). Returns the checkout path. The Forge owns its checkouts:
+        callers never name paths, and the adapter only ever deletes a
+        checkout it created itself (finish_work)."""
+        raise NotImplementedError
+
+    def finish_work(self, number: int) -> None:
+        """Remove the checkout start_work made for this issue. No-op when
+        the issue never started (normal: kind_for can raise first)."""
         raise NotImplementedError
 
     def commit_all(self, message: str, workdir: str = ".") -> bool:

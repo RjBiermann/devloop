@@ -4,9 +4,7 @@ The spec loop is devloop/spec.py; the review loop is devloop/review.py;
 the ledger protocol is devloop/ledger.py. This module owns only the
 build flow and the sweep that drives it."""
 
-import shutil
 import sys
-import tempfile
 from concurrent.futures import ThreadPoolExecutor
 
 from . import ledger
@@ -40,10 +38,13 @@ PROMPTS = {
 
 
 def process_issue(cfg: Config, forge: Forge, runtime: AgentRuntime, issue: Issue,
-                  workdir: str = ".") -> Outcome:
+                  workdir: str | None = None) -> Outcome:
     """One build: prompt the agent, then hand the finished work to the
     delivery module. Agent-run failures report here; everything after a
-    successful run (gate, commit, conflict gate, PR) is deliver()'s job."""
+    successful run (gate, commit, conflict gate, PR) is deliver()'s job.
+    Owns the build's create/cleanup bracket: start_work → finish_work,
+    even when the run explodes. workdir=None means the Forge allocates
+    its own checkout; callers never name paths."""
     kind = cfg.kind_for(issue.labels)  # raises if triggers are not exclusive
     branch = f"devloop/issue-{issue.number}"
     # progress heartbeat: the issue timeline shows when a build starts and
@@ -53,28 +54,37 @@ def process_issue(cfg: Config, forge: Forge, runtime: AgentRuntime, issue: Issue
                   f"build started — attempt {ledger.count(forge, issue) + 1}/"
                   f"{cfg.pipeline.max_attempts}, kind `{kind}`, agent `{runtime.name}`, "
                   f"branch `{branch}`")
-    forge.start_work(issue.number, branch, workdir)
-    res = None
+    # Forge allocates the private checkout (one per build — parallel agents
+    # must never share a working tree); process_issue owns the cleanup bracket.
+    workdir = forge.start_work(issue.number, branch)
     try:
-        res = runtime.run(PROMPTS[kind].format(n=issue.number, title=issue.title, body=issue.body),
-                          cwd=workdir, timeout=cfg.pipeline.timeout)
-    except Exception as e:
-        # Timeout/explosion mid-run: no delivery, but the human must know.
-        ledger.failure(forge, issue, "agent", note=f"no PR opened ({type(e).__name__})", tail=str(e))
-        return Outcome(issue.number, branch, False, False)
-    if not res.ok:
-        # A failed agent run must not ship: no commit, no gate, no PR — the
-        # error tail goes to the issue for the human, the branch stays local.
-        ledger.failure(forge, issue, "agent", note="no PR opened", tail=res.output)
-        return Outcome(issue.number, branch, False)
-    out = deliver(cfg, forge, runtime, issue, branch, workdir, res.output)
-    if out.pr:
-        findings = review_pr(cfg, forge, runtime, out.pr, branch,
-                             issue_title=issue.title, issue_body=issue.body)
-        if findings and cfg.pipeline.repair_rounds > 0:
-            repair_pr(cfg, forge, runtime, out.pr, branch, workdir,
-                      issue.title, issue.body, findings)
-    return out
+        res = None
+        try:
+            res = runtime.run(
+                PROMPTS[kind]
+                .replace("{n}", str(issue.number))
+                .replace("{title}", issue.title)
+                .replace("{body}", issue.body),
+                cwd=workdir, timeout=cfg.pipeline.timeout)
+        except Exception as e:
+            # Timeout/explosion mid-run: no delivery, but the human must know.
+            ledger.failure(forge, issue, "agent", note=f"no PR opened ({type(e).__name__})", tail=str(e))
+            return Outcome(issue.number, branch, False, False)
+        if not res.ok:
+            # A failed agent run must not ship: no commit, no gate, no PR — the
+            # error tail goes to the issue for the human, the branch stays local.
+            ledger.failure(forge, issue, "agent", note="no PR opened", tail=res.output)
+            return Outcome(issue.number, branch, False)
+        out = deliver(cfg, forge, runtime, issue, branch, workdir, res.output)
+        if out.pr:
+            findings = review_pr(cfg, forge, runtime, out.pr, branch,
+                                 issue_title=issue.title, issue_body=issue.body)
+            if findings and cfg.pipeline.repair_rounds > 0:
+                repair_pr(cfg, forge, runtime, out.pr, branch, workdir,
+                          issue.title, issue.body, findings)
+        return out
+    finally:
+        forge.finish_work(issue.number)
 
 
 def rebase_stale(cfg: Config, forge: Forge, devloop_heads: list[str]) -> None:
@@ -173,24 +183,14 @@ def run_once(cfg: Config, forge: Forge, runtime: AgentRuntime) -> list[Outcome]:
     if not candidates:
         return []
 
-    # One private git worktree per build: parallel agents must not share a
-    # working tree (they race on git state). Removed when the build ends.
-    dirs: dict[int, str] = {}
-    parents: dict[int, str] = {}
-    for issue in candidates:
-        parents[issue.number] = tempfile.mkdtemp(prefix=f"devloop-{issue.number}-")
-        dirs[issue.number] = parents[issue.number] + "/tree"
-
     def worker(issue: Issue) -> Outcome:
         try:
-            return process_issue(cfg, forge, runtime, issue, dirs[issue.number])
+            return process_issue(cfg, forge, runtime, issue)
         except Exception as e:
             # One broken issue must not block the queue (head-of-line blocking
             # would retry it forever in watch mode and starve everything else).
             print(f"#{issue.number}: failed: {e}", file=sys.stderr)
             return Outcome(issue.number, f"devloop/issue-{issue.number}", False, False)
-        finally:
-            shutil.rmtree(parents[issue.number], ignore_errors=True)
 
     out: list[Outcome] = []
     with ThreadPoolExecutor(max_workers=slots) as pool:
