@@ -101,6 +101,9 @@ def test_run_once_skips_issues_with_open_pr():
         def open_pr_head_branches(self):
             return ["devloop/issue-1"]
 
+        def rebase_branch(self, branch):
+            return True
+
         def start_work(self, *a):
             raise AssertionError("issue with open PR must be skipped")
 
@@ -191,6 +194,9 @@ def test_queue_full_starts_nothing():
     class QueueForge(Forge):
         def open_pr_head_branches(self):
             return ["devloop/issue-9"]
+
+        def rebase_branch(self, branch):
+            return True  # upkeep runs even when full — it frees the queue
 
         def issues_with_labels(self, _l):
             raise AssertionError("must not even list issues when queue is full")
@@ -492,3 +498,38 @@ def test_comment_commands():
         pass
     else:
         raise AssertionError("close_issue must stay human-only")
+
+
+def test_rebase_stage_rebases_clean_and_rebuilds_conflicts():
+    """Pipeline upkeep: open devloop PRs get rebased onto main silently;
+    a conflicting PR is closed with a rebuild note (counts as an attempt)."""
+    import devloop.core as core
+
+    class RebaseForge(_full_flow_forge):
+        def __init__(self, conflict):
+            super().__init__()
+            self.conflict = conflict
+            self.rebased = []
+            self.closed = []
+
+        def rebase_branch(self, branch):
+            self.rebased.append(branch)
+            return not self.conflict
+
+        def pr_for_branch(self, b):
+            return 77 if b == "devloop/issue-9" else None
+
+        def close_pr(self, n, reason):
+            self.closed.append(n)
+
+    # clean rebase: silent, PR stays open
+    f1 = RebaseForge(conflict=False)
+    core.rebase_stale(Config(repo="o/r"), f1, ["devloop/issue-9"])
+    assert f1.rebased == ["devloop/issue-9"] and not f1.closed and not f1.notes
+
+    # conflict: PR closed, issue told loudly, counts as an attempt
+    f2 = RebaseForge(conflict=True)
+    core.rebase_stale(Config(repo="o/r"), f2, ["devloop/issue-9"])
+    assert f2.closed == [77]
+    assert any(n.startswith("rebase conflict") for _, n in f2.notes)
+    assert core.failure_count(f2, type("I", (), {"number": 9})()) == 1

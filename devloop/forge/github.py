@@ -7,6 +7,7 @@ on dev machines and GitHub-hosted runners, and maps 1:1 to forge operations.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 
@@ -89,6 +90,33 @@ class GitHub(Forge):
     def pr_comments(self, pr_number: int) -> list[Comment]:
         # PR comments live on the issue endpoint with the same number
         return self.comments(pr_number)
+
+    def rebase_branch(self, branch: str) -> bool:
+        """Rebase a pushed branch onto the default branch and force-push.
+        False on conflicts — the caller closes the PR and rebuilds (agent
+        work is cheaper to redo than human conflict resolution)."""
+        _run(["git", "fetch", "origin"])
+        default = _run(["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"]).strip()
+        import tempfile
+        wt = tempfile.mkdtemp(prefix="devloop-rebase-") + "/tree"
+        _run(["git", "worktree", "add", "--detach", wt, branch])
+        try:
+            r = subprocess.run(["git", "rebase", default], cwd=wt,
+                               capture_output=True, text=True)
+            if r.returncode != 0:
+                subprocess.run(["git", "rebase", "--abort"], cwd=wt)
+                return False
+            # detached worktree: rebase moved HEAD, not the branch ref —
+            # repoint it before pushing, or the push re-pushes the stale tip
+            # (update-ref, not branch -f: branch -f refuses when any worktree
+            # entry — even a stale one — still names the branch)
+            sha = _run(["git", "rev-parse", "HEAD"], cwd=wt).strip()
+            _run(["git", "update-ref", f"refs/heads/{branch}", sha], cwd=wt)
+            _run(["git", "push", "--force-with-lease", "origin", branch], cwd=wt)
+            return True
+        finally:
+            shutil.rmtree(os.path.dirname(wt), ignore_errors=True)
+            subprocess.run(["git", "worktree", "prune"], capture_output=True)
 
     def open_pr_head_branches(self) -> list[str]:
         out = _run(["gh", "pr", "list", "-R", self.repo, "--state", "open",

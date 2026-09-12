@@ -18,7 +18,9 @@ from .runtime import AgentRuntime
 # Per trigger kind: what the agent is asked to do. Skills carry the how.
 PROMPTS = {
     "fix": "A reported problem exists in this repo (issue below). Probe reality first, "
-           "record evidence in FINDINGS.md, then make the minimal fix, and follow the "
+           "record evidence in FINDINGS-{n}.md (per-issue evidence file — a shared "
+           "FINDINGS.md collides with every concurrent merge), then make the minimal "
+           "fix, and follow the "
            "verify skill. Do not merge; leave the work committed for human review.\n\n"
            "## Issue #{n}: {title}\n{body}",
     "new": "Build the unit of work described in this issue. Read any spec carefully, "
@@ -26,7 +28,7 @@ PROMPTS = {
            "spec implies it, and follow the verify skill. Do not merge.\n\n"
            "## Issue #{n}: {title}\n{body}",
     "remove": "Remove the component named in this issue. First gather evidence it is "
-              "dead/broken (probe skill), put the evidence in FINDINGS.md, then remove "
+              "dead/broken (probe skill), put the evidence in FINDINGS-{n}.md, then remove "
               "the component and anything only it referenced. Do not merge.\n\n"
               "## Issue #{n}: {title}\n{body}",
     "task": "Execute the task specified in this issue body — it is the full spec. "
@@ -298,10 +300,28 @@ def review_pr(cfg: Config, forge: Forge, runtime: AgentRuntime, pr_number: int,
 
 FAILURE_MARKERS = (
     "agent run FAILED", "agent made NO changes", "delivery FAILED",
-    "build deferred",
+    "build deferred", "rebase conflict",
 )
 
 RESET_MARKER = "build reset by"
+
+
+def rebase_stale(cfg: Config, forge: Forge, devloop_heads: list[str]) -> None:
+    """Pipeline upkeep, not human work: rebase open devloop PRs onto the
+    current default branch (silently when clean). On conflict, close the PR
+    and mark the issue for rebuild — main moved under the work, and redoing
+    agent labor is cheaper than spending human conflict resolution."""
+    for head in devloop_heads:
+        try:
+            n = int(head.rsplit("-", 1)[-1])
+        except ValueError:
+            continue
+        if forge.rebase_branch(head):
+            continue  # clean — no-op or silently updated, nothing to announce
+        pr = forge.pr_for_branch(head)
+        if pr:
+            forge.close_pr(pr, f"rebase onto main conflicts with merged work — rebuilding ({head})")
+        forge.comment(n, f"rebase conflict — PR closed, building again on fresh main ({head})")
 
 
 def failure_count(forge: Forge, issue: Issue) -> int:
@@ -364,6 +384,11 @@ def handle_command(cfg: Config, forge: Forge, runtime: AgentRuntime,
 def run_once(cfg: Config, forge: Forge, runtime: AgentRuntime) -> list[Outcome]:
     open_heads = forge.open_pr_head_branches()
     devloop_heads = [h for h in open_heads if h.startswith("devloop/")]
+    # Upkeep before slot math: rebase stale PRs; a conflict-closed PR frees a slot.
+    if devloop_heads:
+        rebase_stale(cfg, forge, devloop_heads)
+        open_heads = forge.open_pr_head_branches()
+        devloop_heads = [h for h in open_heads if h.startswith("devloop/")]
     slots = cfg.pipeline.max_parallel - len(devloop_heads)
     # Two layers of conflict prevention:
     #   1. skip issues that already have a devloop PR — never rebuild delivered work

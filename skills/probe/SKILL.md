@@ -10,7 +10,7 @@ Never code from assumption. The first artifact of any job is evidence.
 ## Steps
 
 1. **Reproduce or observe** the problem / the thing being built's context, against the real target (live system, live data, actual behavior).
-2. **Record** everything learned in `FINDINGS.md` at the repo root: what you tried, what you saw, what you concluded. Short, factual, reproducible commands included.
+2. **Record** everything learned in `FINDINGS-<issue>.md` at the repo root (per-issue file — a shared FINDINGS.md collides with every concurrent merge): what you tried, what you saw, what you concluded. Short, factual, reproducible commands included.
 3. **Decide from evidence**, not vibes: if the evidence contradicts the issue's premise, stop and comment on the issue instead of building the wrong thing.
 4. Keep probing cheap — the goal is enough evidence to act, not a research paper.
 
