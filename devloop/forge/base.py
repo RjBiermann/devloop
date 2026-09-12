@@ -51,9 +51,11 @@ class Forge:
         raise NotImplementedError
 
     def commit_all(self, message: str, workdir: str = ".") -> bool:
-        """Commit + push all changes. Returns False when nothing changed —
-        an agent run that produces no diff is a failed delivery, not a
-        silent success (callers report the agent's output to the issue)."""
+        """Commit + push all changes. Returns True when the branch carries
+        deliverable work: staged changes, unpushed commits, or commits the
+        agent already pushed without opening a PR (half-delivery). False =
+        genuinely empty run — a failed delivery, not a silent success
+        (callers report the agent's output to the issue)."""
         raise NotImplementedError
 
     def open_pr(self, branch: str, title: str, body: str) -> None:
@@ -95,6 +97,16 @@ class Forge:
 
     def pr_diff_by_number(self, pr_number: int) -> str:
         """Unified diff of a PR by number (review-by-number mode)."""
+        raise NotImplementedError
+
+    def rebase_branch(self, branch: str) -> bool:
+        """Rebase a pushed branch onto the default branch and force-push.
+        False on conflicts — the caller closes the PR and rebuilds (agent
+        work is cheaper to redo than human conflict resolution)."""
+        raise NotImplementedError
+
+    def open_pr_head_branches(self) -> list[str]:
+        """Head branch names of all open PRs (sweep slot math + conflict gate)."""
         raise NotImplementedError
 
     def pr_body(self, pr_number: int) -> str:

@@ -1,19 +1,21 @@
-"""Orchestrator: trigger → agent job → delivery → review. Pure logic + one loop."""
+"""Build orchestration: trigger → agent job → delivery → upkeep.
+
+The spec loop is devloop/spec.py; the review loop is devloop/review.py;
+the ledger protocol is devloop/ledger.py. This module owns only the
+build flow and the sweep that drives it."""
 
 from __future__ import annotations
 
-import subprocess
-import re
 import shutil
 import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 
 from . import ledger
 from .config import Config
 from .delivery import Outcome, deliver
 from .forge import Forge, Issue
+from .review import review_pr
 from .runtime import AgentRuntime
 
 # Per trigger kind: what the agent is asked to do. Skills carry the how.
@@ -40,83 +42,7 @@ PROMPTS = {
 }
 
 
-# --- spec loop: draft → clarify ↔ human → propose → approved → finalized ----
-
-MARKER = "devloop: status="
-
-
-def parse_status(text: str) -> str | None:
-    """Extract the last devloop status marker from a comment body."""
-    found = None
-    for line in text.splitlines():
-        if line.strip().startswith(MARKER):
-            found = line.strip()[len(MARKER):].split()[0].rstrip(".`")
-    return found
-
-
-SPEC_PHASES = ("clarify", "propose", "finalized")
-
-
-# Instructions appended to the agent prompt per spec phase. The agent decides
-# whether to advance; the human decides whether a proposal becomes final.
-SPEC_INSTRUCTIONS = {
-    "clarify":
-        "Follow the clarify skill: interrogate this spec draft for ambiguity, "
-        "ask at most 3 questions per round with your proposed defaults, and post "
-        "them as ONE issue comment ending with `devloop: status=clarify`. If no "
-        "ambiguity remains that would change what gets built, instead write the "
-        "decision record and post it ending with `devloop: status=propose`.",
-    "propose":
-        "The human has answered the clarify round. Apply their answers to the "
-        "decision record, then follow the decompose skill: propose the epic/"
-        "story/sub-issue breakdown as ONE issue comment ending with "
-        "`devloop: status=propose`. The human will reply `approved` if they "
-        "accept it.",
-    "finalized":
-        "The human approved the breakdown. Follow the decompose skill's "
-        "finalize step: create one issue per story/sub-issue (acceptance "
-        "condition in each body, NO labels — the human labels what to build), "
-        "rewrite this issue's body into the finalized spec (intent + decision "
-        "record + task tree with issue links), and post a summary ending with "
-        "`devloop: status=finalized`.",
-}
-
-
-def spec_phase(comments, forge: Forge, access) -> str:
-    """Current spec state = last marker posted by us, unless an AUTHORIZED
-    human has replied `approved` after a proposal (→ finalized). Pure: takes
-    comments; only authorized authors' approvals count (AI tokens cost money
-    — strangers don't get to fire the pipeline)."""
-    status = "clarify"
-    for c in comments:
-        s = parse_status(c.body)
-        if s in SPEC_PHASES:
-            status = s
-    if status == "propose" and any(
-        c.body.strip().lower() in {"approved", "approved."}
-        and forge.is_authorized(c.author, access)
-        for c in comments
-    ):
-        return "finalized"
-    return status
-
-
-def process_spec(cfg: Config, forge: Forge, runtime: AgentRuntime, number: int) -> str:
-    """One round of the spec loop. Returns the phase after this round."""
-    comments = forge.comments(number)
-    phase = spec_phase(comments, forge, cfg.access)
-    if phase == "finalized":
-        return phase  # terminal: sub-issues exist, spec rewritten — nothing to redo
-    issue = forge.issue(number)
-    prompt = (
-        f"You are refining a spec for issue #{number}. Do NOT write code.\n\n"
-        f"## Issue #{number}: {issue.title}\n{issue.body}\n\n"
-        f"## Conversation so far\n" + "\n---\n".join(c.body for c in comments) + "\n\n"
-        + SPEC_INSTRUCTIONS[phase]
-    )
-    res = runtime.run(prompt, cwd=".", timeout=cfg.pipeline.timeout)
-    forge.comment(number, res.output.strip())
-    return parse_status(res.output) or phase
+# --- spec loop: moved to devloop/spec.py -------------------------------------
 
 
 def process_issue(cfg: Config, forge: Forge, runtime: AgentRuntime, issue: Issue,
@@ -152,78 +78,6 @@ def process_issue(cfg: Config, forge: Forge, runtime: AgentRuntime, issue: Issue
         review_pr(cfg, forge, runtime, out.pr, branch,
                   issue_title=issue.title, issue_body=issue.body)
     return out
-
-
-REVIEW_PROMPT = (
-    "You are reviewing a pull request authored by another AI agent. Review "
-    "the diff below against the spec issue below it: correctness, scope creep "
-    "(changes the issue never asked for), repo-convention violations "
-    "(AGENTS.md), and missing tests. Do NOT make changes.\n\n"
-    "Output format: the single word `LGTM` if the PR is ready for human "
-    "review, otherwise a numbered findings list — each finding as "
-    "`file:line — severity (P0/P1/P2) — one-paragraph rationale`.\n\n"
-    "## The spec issue\n## {issue_title}\n{issue_body}\n\n"
-    "## The diff\n```diff\n{diff}\n```"
-)
-
-
-def review_prompt(cfg: Config, issue_title: str = "", issue_body: str = "") -> str:
-    """Fully substituted review prompt: base template + repo-specific
-    guidance from skills/pre-review/SKILL.md (the customization point) +
-    the spec issue. Substitution is replace-based, not .format — injected
-    content (issue bodies, diffs) may contain braces."""
-    p = Path("skills/pre-review/SKILL.md")
-    prompt = REVIEW_PROMPT + "\n\n## Repo-specific review guidance\n" + p.read_text() if p.exists() else REVIEW_PROMPT
-    return (prompt
-            .replace("{issue_title}", issue_title)
-            .replace("{issue_body}", issue_body))
-    # {diff} stays — review_pr injects it per round
-
-
-def review_pr(cfg: Config, forge: Forge, runtime: AgentRuntime, pr_number: int,
-              branch: str = "", issue_title: str = "", issue_body: str = "") -> None:
-    """AI pre-review rounds (pipeline.review_rounds) on one PR. Findings only
-    — no auto-fix: a human reads them on the PR. Stops early on LGTM.
-    branch = head branch when known (build flow); empty = review-by-number
-    (`devloop review <pr>`), diff fetched from the forge.
-    issue_title/issue_body: the spec the diff is judged against (the builder
-    flow has it; review-by-number parses `Closes #N` from the PR body)."""
-    if not issue_title:
-        body = forge.pr_body(pr_number)
-        m = re.search(r"[Cc]loses #(\d+)", body)
-        if m:
-            it = forge.issue(int(m.group(1)))
-            issue_title, issue_body = it.title, it.body
-    prompt = review_prompt(cfg, issue_title, issue_body)
-    # the reviewer reads the PR thread once at the start — human replies
-    # ("already fixed elsewhere", "out of scope") must not be ignored
-    thread = [f"- {c.author}: {c.body.strip()[:500]}"
-              for c in forge.pr_comments(pr_number)]
-    prior: list[str] = []
-    for rnd in range(1, cfg.pipeline.review_rounds + 1):
-        # diff straight from the forge — GitHub computes it authoritatively;
-        # local origin/HEAD-based diffs proved unreliable mid-build
-        diff = forge.pr_diff_by_number(pr_number)
-        round_prompt = prompt.replace("{diff}", diff[:40000])
-        if thread:
-            round_prompt += "\n\n## The PR thread so far\n" + "\n".join(thread)
-        if prior:
-            # rounds are isolated sessions — carry the prior findings in, so
-            # round N verifies/extends rather than repeats round 1
-            round_prompt += ("\n\n## Your earlier findings (verify against the "
-                             "current diff; drop resolved ones, keep and "
-                             "sharpen the rest)\n" + "\n---\n".join(prior))
-        res = runtime.run(round_prompt, cwd=".", timeout=cfg.pipeline.timeout)
-        if not res.ok:
-            forge.pr_comment(pr_number, f"AI pre-review round {rnd}: reviewer run failed.")
-            return
-        prior.append(res.output.strip())
-        forge.pr_comment(pr_number, f"**AI pre-review, round {rnd}/{cfg.pipeline.review_rounds}**\n\n"
-                                 + res.output.strip()[-4000:])
-        if "LGTM" in res.output[-200:].upper():
-            return
-
-
 
 
 def rebase_stale(cfg: Config, forge: Forge, devloop_heads: list[str]) -> None:
@@ -345,5 +199,4 @@ def run_once(cfg: Config, forge: Forge, runtime: AgentRuntime) -> list[Outcome]:
     with ThreadPoolExecutor(max_workers=slots) as pool:
         for r in pool.map(worker, candidates):
             out.append(r)
-    subprocess.run(["git", "worktree", "prune"], capture_output=True)
     return out

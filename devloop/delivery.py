@@ -10,7 +10,7 @@ forgotten except clause in a caller.
 
 from __future__ import annotations
 
-import subprocess
+import subprocess  # only run_verify — all git goes through the Forge seam
 from dataclasses import dataclass
 
 from . import ledger
@@ -45,15 +45,10 @@ def deliver(cfg: Config, forge: Forge, runtime: AgentRuntime, issue: Issue,
         if cfg.pipeline.verify:
             gate_ok = run_verify(cfg.pipeline.verify, workdir)
         existing = forge.pr_for_branch(branch)
+        # half-delivery rule lives behind the Forge seam: commit_all returns
+        # True for staged, unpushed, or already-pushed-but-no-PR work.
         delivered = forge.commit_all(
             f"devloop({kind}): fixes #{issue.number} [agent: {runtime.name}]", workdir)
-        if not delivered and not existing:
-            # nothing staged and nothing unpushed — but the agent may have
-            # pushed the branch itself without opening a PR (half-delivery):
-            # if the branch is ahead of main, deliver it by opening the PR.
-            ahead = subprocess.run(["git", "rev-list", "--count", "origin/HEAD..HEAD"],
-                                   capture_output=True, text=True, cwd=workdir)
-            delivered = ahead.returncode == 0 and ahead.stdout.strip() not in {"", "0"}
         if not existing and not delivered:
             # No diff AND no PR — nothing delivered. The agent said something —
             # that's the finding (question, verdict, or stall); surface it.

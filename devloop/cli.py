@@ -12,10 +12,12 @@ from pathlib import Path
 
 from . import __version__
 from .config import load
-from .core import handle_command, process_spec, review_pr, run_once, spec_phase
+from .core import handle_command, run_once
 from .forge import get_forge
+from .review import review_pr
 from .runtime import get_runtime
 from .skillcheck import validate_skills
+from .spec import process_spec, spec_phase
 
 
 def cmd_init(_args: argparse.Namespace) -> None:

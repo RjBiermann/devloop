@@ -28,7 +28,7 @@ def test_human_only_ops_are_blocked():
 
 
 def test_spec_state_machine():
-    from devloop.core import MARKER, parse_status, spec_phase
+    from devloop.spec import MARKER, parse_status, spec_phase
 
     class EveryoneForge(Forge):
         """every commenter authorized — isolates the state-machine logic"""
@@ -56,7 +56,7 @@ def test_spec_state_machine():
 
 def test_spec_never_reprocesses_finalized():
     """Terminal state: a finalized spec gets no second agent round."""
-    from devloop.core import process_spec
+    from devloop.spec import process_spec
 
     calls = []
 
@@ -470,7 +470,8 @@ def test_review_rounds_carry_prior_findings():
             seen.append(prompt)
             return type("Res", (), {"ok": True, "output": f"finding round {len(seen)}"})()
 
-    core.review_pr(Config(repo="o/r", pipeline=Pipeline(review_rounds=2)), forge, R(), 55)
+    from devloop.review import review_pr
+    review_pr(Config(repo="o/r", pipeline=Pipeline(review_rounds=2)), forge, R(), 55)
     assert "finding round 1" in seen[1]     # round 2 saw round 1's findings
     assert "diff" in seen[0] and seen[0].count("```diff") == 1  # the diff IS injected
     assert "Your earlier findings" in seen[1]
@@ -513,6 +514,40 @@ def test_comment_commands():
         pass
     else:
         raise AssertionError("close_issue must stay human-only")
+
+
+def test_commit_all_counts_pushed_ahead_as_delivered():
+    """The half-delivery rule lives behind the Forge seam: commit_all returns
+    True for work the agent already pushed (no PR), False for a clean branch.
+    Real git, no gh — the seam contract, not the adapter's gh plumbing."""
+    import subprocess as sp
+    import tempfile
+    from devloop.forge.github import GitHub
+
+    tmp = tempfile.mkdtemp()
+    bare = f"{tmp}/origin.git"
+    sp.run(["git", "init", "--bare", "-q", bare], check=True)
+    w = f"{tmp}/clone"
+    sp.run(["git", "clone", "-q", bare, w], check=True)
+
+    def g(*a, **kw):
+        return sp.run(["git", *a], cwd=kw.pop("cwd", w),
+                      capture_output=True, text=True)
+
+    default = g("symbolic-ref", "--short", "HEAD").stdout.strip()
+    g("commit", "--allow-empty", "-m", "init")
+    g("push", "-q", "-u", "origin", default)
+    g("remote", "set-head", "origin", "-a")  # create origin/HEAD
+
+    forge = GitHub("o/r")
+    # half-delivery: agent pushed devloop/issue-7 itself, no PR — deliverable
+    g("checkout", "-q", "-b", "devloop/issue-7")
+    g("commit", "--allow-empty", "-m", "agent work")
+    g("push", "-q", "-u", "origin", "devloop/issue-7")
+    assert forge.commit_all("devloop: fixes #7", w) is True
+    # genuinely empty branch: False
+    g("checkout", "-q", "-b", "devloop/issue-8", "origin/HEAD")
+    assert forge.commit_all("devloop: fixes #8", w) is False
 
 
 def test_rebase_stage_rebases_clean_and_rebuilds_conflicts():

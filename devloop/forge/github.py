@@ -152,9 +152,10 @@ class GitHub(Forge):
         _run(push, cwd=workdir)
 
     def commit_all(self, message: str, workdir: str = ".") -> bool:
-        """Commit + push all changes. Returns False when nothing changed —
-        an agent run that produces no diff is a failed delivery, not a
-        silent success (callers report the agent's output to the issue)."""
+        """Commit + push all changes. Returns True when the branch carries
+        deliverable work: staged changes, unpushed commits, or commits the
+        agent already pushed without opening a PR (half-delivery).
+        False = genuinely empty run."""
         _run(["git", "add", "-A"], cwd=workdir)
         r = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=workdir)
         if r.returncode == 0:
@@ -165,7 +166,11 @@ class GitHub(Forge):
             if ahead.returncode == 0 and ahead.stdout.strip() not in {"", "0"}:
                 _run(["git", "push"], cwd=workdir)
                 return True
-            return False  # genuinely empty run
+            # already pushed, no PR yet: still deliverable work (half-delivery)
+            pushed = subprocess.run(
+                ["git", "rev-list", "--count", "origin/HEAD..HEAD"],
+                capture_output=True, text=True, cwd=workdir)
+            return pushed.returncode == 0 and pushed.stdout.strip() not in {"", "0"}
         _run(["git", "commit", "-m", message], cwd=workdir)
         _run(["git", "push"], cwd=workdir)
         return True
