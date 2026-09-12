@@ -4,8 +4,6 @@ The spec loop is devloop/spec.py; the review loop is devloop/review.py;
 the ledger protocol is devloop/ledger.py. This module owns only the
 build flow and the sweep that drives it."""
 
-from __future__ import annotations
-
 import shutil
 import sys
 import tempfile

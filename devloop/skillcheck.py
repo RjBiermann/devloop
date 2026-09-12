@@ -4,8 +4,6 @@ Mirrors pi's behavior on SKILL.md: most violations produce warnings, the
 skill still loads; only a missing description makes a skill undiscoverable.
 """
 
-from __future__ import annotations
-
 import re
 from pathlib import Path
 

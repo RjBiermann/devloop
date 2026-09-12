@@ -1,7 +1,5 @@
 """Configuration loading and validation. Stdlib only."""
 
-from __future__ import annotations
-
 import tomllib
 import warnings
 from dataclasses import dataclass, field
@@ -90,7 +88,7 @@ def load(path: str | Path = "config.toml") -> Config:
         forge_kind=raw.get("forge", {}).get("kind", "github"),
         repo=raw.get("forge", {}).get("repo", ""),
     )
-    _apply(cfg.labels, raw.get("labels", {}), "labels", coerce=str)
+    _apply(cfg.labels, raw.get("labels", {}), "labels")
     _apply(cfg.runtime, raw.get("runtime", {}), "runtime")
     _apply(cfg.pipeline, raw.get("pipeline", {}), "pipeline")
     _apply(cfg.access, raw.get("access", {}), "access")
@@ -106,9 +104,9 @@ def load(path: str | Path = "config.toml") -> Config:
     return cfg
 
 
-def _apply(obj, section: dict, name: str, coerce=None) -> None:
+def _apply(obj, section: dict, name: str) -> None:
     for key, val in section.items():
         if hasattr(obj, key):
-            setattr(obj, key, coerce(val) if coerce else val)
+            setattr(obj, key, val)
         else:
             warnings.warn(f"config [{name}]: unknown key {key!r} ignored — typo?")

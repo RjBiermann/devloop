@@ -4,8 +4,6 @@ MVP choice: no SDK dependency. `gh` is ubiquitous, already authenticated
 on dev machines and GitHub-hosted runners, and maps 1:1 to forge operations.
 """
 
-from __future__ import annotations
-
 import json
 import os
 import shutil

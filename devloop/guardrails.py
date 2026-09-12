@@ -1,7 +1,5 @@
 """Guardrails: the non-negotiable contract. Enforced, not documented."""
 
-from __future__ import annotations
-
 
 class GuardrailViolation(Exception):
     """Raised when an agent attempts an action reserved for humans."""

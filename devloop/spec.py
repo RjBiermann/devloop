@@ -6,8 +6,6 @@ history read through the `devloop: status=` marker — the spec-loop
 counterpart of the ledger protocol (no extra state anywhere).
 """
 
-from __future__ import annotations
-
 from .config import Config
 from .forge import Forge
 from .runtime import AgentRuntime

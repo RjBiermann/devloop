@@ -1,7 +1,5 @@
 """Forge interface. Every forge adapter implements this — and inherits the guardrails."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 
 from ..guardrails import HUMAN_ONLY, GuardrailViolation

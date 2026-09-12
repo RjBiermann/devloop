@@ -1,7 +1,5 @@
 """AgentRuntime: one agent job = one prompt in a sandboxed cwd."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 import subprocess
 

@@ -8,9 +8,7 @@ an Outcome, so a silent delivery failure is a bug in one place, not a
 forgotten except clause in a caller.
 """
 
-from __future__ import annotations
-
-import subprocess  # only run_verify — all git goes through the Forge seam
+import subprocess
 from dataclasses import dataclass
 
 from . import ledger
@@ -28,13 +26,6 @@ class Outcome:
     pr: int | None = None  # None = nothing shipped (failed, empty, or deferred)
 
 
-def run_verify(verify_cmd: str, workdir: str = ".") -> bool:
-    """Runs in the build's worktree — the gate judges what will be delivered,
-    not the (possibly older) default checkout."""
-    r = subprocess.run(verify_cmd, shell=True, capture_output=True, text=True, cwd=workdir)
-    return r.returncode == 0
-
-
 def deliver(cfg: Config, forge: Forge, runtime: AgentRuntime, issue: Issue,
             branch: str, workdir: str, agent_output: str) -> Outcome:
     """Ship one finished agent run. The agent already succeeded (res.ok);
@@ -43,7 +34,11 @@ def deliver(cfg: Config, forge: Forge, runtime: AgentRuntime, issue: Issue,
     gate_ok = True
     try:
         if cfg.pipeline.verify:
-            gate_ok = run_verify(cfg.pipeline.verify, workdir)
+            # runs in the build's worktree — the gate judges what will be
+            # delivered, not the (possibly older) default checkout
+            r = subprocess.run(cfg.pipeline.verify, shell=True,
+                               capture_output=True, text=True, cwd=workdir)
+            gate_ok = r.returncode == 0
         existing = forge.pr_for_branch(branch)
         # half-delivery rule lives behind the Forge seam: commit_all returns
         # True for staged, unpushed, or already-pushed-but-no-PR work.

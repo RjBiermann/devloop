@@ -9,8 +9,6 @@ Marker strings are load-bearing for history: comments already on live
 issues were written by older versions, so they never change — only append.
 """
 
-from __future__ import annotations
-
 from .forge import Forge, Issue
 
 MARKERS = {

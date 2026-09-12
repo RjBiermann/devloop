@@ -8,8 +8,6 @@ it runs after a PR exists and is reachable on its own (`devloop review`,
 `/review`). A human reads the findings; the reviewer never changes code.
 """
 
-from __future__ import annotations
-
 import re
 from pathlib import Path
 

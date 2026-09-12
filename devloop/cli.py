@@ -1,7 +1,5 @@
 """CLI: devloop init | once | watch | spec | review | command"""
 
-from __future__ import annotations
-
 import argparse
 import json
 import os
@@ -17,7 +15,7 @@ from .forge import get_forge
 from .review import review_pr
 from .runtime import get_runtime
 from .skillcheck import validate_skills
-from .spec import process_spec, spec_phase
+from .spec import process_spec
 
 
 def cmd_init(_args: argparse.Namespace) -> None:
@@ -60,13 +58,8 @@ def cmd_spec(args: argparse.Namespace) -> None:
     cfg = load()
     _warn_bad_skills()
     forge, runtime = _runtime(cfg)
-    comments = forge.comments(args.issue)
-    phase = spec_phase(comments, forge, cfg.access)
-    if phase == "finalized":
-        print(f"#{args.issue}: already finalized — sub-issues exist, nothing to redo")
-        return
     new_phase = process_spec(cfg, forge, runtime, args.issue)
-    print(f"#{args.issue}: {phase} → {new_phase}")
+    print(f"#{args.issue}: {new_phase}")
 
 
 def cmd_review(args: argparse.Namespace) -> None:
