@@ -41,7 +41,7 @@ class Forge:
         raise NotImplementedError
 
     def comments(self, number: int) -> list[Comment]:
-        return []
+        raise NotImplementedError
 
     # --- write side ------------------------------------------------------
     def start_work(self, number: int, branch: str, workdir: str = ".") -> None:
@@ -74,7 +74,7 @@ class Forge:
     def pr_comments(self, pr_number: int) -> list[Comment]:
         """PR review-thread comments — the reviewer reads the thread so
         human replies ("already fixed", "out of scope") aren't ignored."""
-        return []
+        raise NotImplementedError
 
     def branch_files(self, branch: str) -> list[str]:
         """Files a pushed branch changes vs the default branch — the
@@ -91,14 +91,14 @@ class Forge:
         """Number of the open PR with this head branch, if any. An agent may
         self-deliver (its own commit + push + gh pr create) — the pipeline
         must recognize that and honor it, not report it as a failure."""
-        return None
+        raise NotImplementedError
 
     def pr_diff_by_number(self, pr_number: int) -> str:
         """Unified diff of a PR by number (review-by-number mode)."""
-        return ""
+        raise NotImplementedError
 
     def pr_body(self, pr_number: int) -> str:
-        return ""
+        raise NotImplementedError
 
     # --- human-only operations: blocked in the base -----------------------
     def merge(self, pr_number: int) -> None:

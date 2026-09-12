@@ -6,7 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from devloop.config import Access, Config, Labels, Pipeline
-from devloop.forge.base import Comment, Forge
+from devloop.forge.base import Comment, Forge, Issue
 from devloop.guardrails import GuardrailViolation
 
 
@@ -106,6 +106,9 @@ def test_run_once_skips_issues_with_open_pr():
 
         def start_work(self, *a):
             raise AssertionError("issue with open PR must be skipped")
+
+        def comments(self, _n):
+            return []  # ledger reads the issue; no failures recorded here
 
     class FakeRuntime:
         name = "fake"
@@ -279,62 +282,49 @@ def test_renamed_labels_route():
     assert cfg.kind_for(["ai-fix"]) is None  # renamed away: old label inert
 
 
-if __name__ == "__main__":
-    test_human_only_ops_are_blocked()
-    test_spec_state_machine()
-    test_spec_never_reprocesses_finalized()
-    test_run_once_skips_issues_with_open_pr()
-    test_queue_full_starts_nothing()
-    test_skillcheck_warns_and_never_blocks()
-    test_trigger_authority_defaults_and_overrides()
-    test_access_mode_typo_fails_loudly()
-    test_trigger_labels_are_mutually_exclusive()
-    test_renamed_labels_route()
-    test_config_version_guard()
-    print("all checks passed")
 
-
-def _full_flow_forge(open_heads=(), pr_files=None, calls=None):
+class FlowForge(Forge):
     """FakeForge wired for the full process_issue flow: agent 'commits and
     pushes' (commit_all True), open_pr recorded, branch_files/pr_files
     overridable to stage conflict-gate scenarios."""
-    from devloop.forge.base import Forge
 
-    class FlowForge(Forge):
-        def __init__(self):
-            self.prs = []
-            self.notes = []
-            self.cwds = []
+    def __init__(self, open_heads=(), pr_files=None):
+        self.prs = []
+        self.notes = []
+        self.cwds = []
+        self._open_heads = list(open_heads)
+        self._pr_files = pr_files or {}
 
-        def issues_with_labels(self, _l):
-            return [type("I", (), {"number": n, "title": f"t{n}", "body": "", "labels": ["ai-fix"]})
-                    for n in (1, 2)]
+    def issues_with_labels(self, _l):
+        return [Issue(n, f"t{n}", "", ["ai-fix"]) for n in (1, 2)]
 
-        def open_pr_head_branches(self):
-            return list(open_heads)
+    def open_pr_head_branches(self):
+        return list(self._open_heads)
 
-        def pr_for_branch(self, _b):
-            return None
+    def pr_for_branch(self, _b):
+        return None
 
-        def start_work(self, number, branch, workdir="."):
-            self.cwds.append(workdir)
+    def start_work(self, number, branch, workdir="."):
+        self.cwds.append(workdir)
 
-        def commit_all(self, message, workdir="."):
-            return True
+    def commit_all(self, message, workdir="."):
+        return True
 
-        def branch_files(self, _b):
-            return ["lint.yml"]  # both builds touch the same file
+    def branch_files(self, _b):
+        return ["lint.yml"]  # both builds touch the same file
 
-        def pr_files(self, n):
-            return (pr_files or {}).get(n, [])
+    def pr_files(self, n):
+        return self._pr_files.get(n, [])
 
-        def open_pr(self, branch, title, body):
-            self.prs.append(branch)
+    def open_pr(self, branch, title, body):
+        self.prs.append(branch)
 
-        def comment(self, number, body):
-            self.notes.append((number, body))
+    def comment(self, number, body):
+        self.notes.append((number, body))
 
-    return FlowForge()
+    def comments(self, number):
+        # the ledger protocol reads failure comments back off the issue
+        return [Comment("x", b) for n, b in self.notes if n == number]
 
 
 def test_parallel_builds_get_distinct_worktrees():
@@ -343,7 +333,7 @@ def test_parallel_builds_get_distinct_worktrees():
     import devloop.core as core
     from devloop.config import Config
 
-    forge = _full_flow_forge()
+    forge = FlowForge()
 
     class R:
         name = "fake"
@@ -358,45 +348,49 @@ def test_parallel_builds_get_distinct_worktrees():
 
 
 def test_conflict_gate_defers_overlapping_builds():
-    """Two concurrent builds touching the same files: the later delivery is
-    deferred (no PR), not shipped as a guaranteed merge conflict. The branch
-    keeps the work; a later sweep delivers after the conflicting PR merges."""
-    import devloop.core as core
+    """A build touching files an open devloop PR also touches: the delivery
+    is deferred (no PR), not shipped as a guaranteed merge conflict. The
+    branch keeps the work; a later sweep delivers after the other PR merges.
+    Tests hit the delivery module's interface directly — no full build run."""
+    import devloop.delivery as delivery
+    from devloop import ledger
     from devloop.config import Config
+    from devloop.forge.base import Issue
 
-    forge = _full_flow_forge(open_heads=["devloop/issue-2"], pr_files={77: ["lint.yml"]})
+    forge = FlowForge(open_heads=["devloop/issue-2"], pr_files={77: ["lint.yml"]})
     forge.pr_for_branch = lambda b: 77 if b == "devloop/issue-2" else None
+    issue = Issue(1, "t1", "", ["ai-fix"])
 
     class R:
         name = "fake"
-        def run(self, prompt, cwd, timeout):
-            return type("Res", (), {"ok": True, "output": "done"})()
 
-    out = core.run_once(Config(repo="o/r", pipeline=Pipeline(max_parallel=2)), forge, R())
-    assert len(out) == 1 and out[0].issue == 1 and not out[0].delivered
+    out = delivery.deliver(Config(repo="o/r"), forge, R(), issue,
+                           "devloop/issue-1", ".", "done")
+    assert out.pr is None
     assert not forge.prs  # nothing opened — no guaranteed conflict shipped
     assert any(n.startswith("build deferred") for _, n in forge.notes)
     # deferral is an attempt: the cap bounds re-run spend
-    assert core.failure_count(forge, type("I", (), {"number": 1})()) == 1
+    assert ledger.count(forge, issue) == 1
 
 
 def test_conflict_gate_passes_disjoint_builds():
-    """Same scenario, disjoint files: both PRs open — parallel where parallel
-    is actually safe."""
-    import devloop.core as core
+    """Same scenario, disjoint files: the PR opens — parallel where parallel
+    is actually safe. Delivery interface, no full build run."""
+    import devloop.delivery as delivery
     from devloop.config import Config
+    from devloop.forge.base import Issue
 
-    forge = _full_flow_forge(open_heads=["devloop/issue-2"], pr_files={77: ["other.py"]})
+    forge = FlowForge(open_heads=["devloop/issue-2"], pr_files={77: ["other.py"]})
     forge.pr_for_branch = lambda b: 77 if b == "devloop/issue-2" else None
     forge.branch_files = lambda b: ["lint.yml"]
+    issue = Issue(1, "t1", "", ["ai-fix"])
 
     class R:
         name = "fake"
-        def run(self, prompt, cwd, timeout):
-            return type("Res", (), {"ok": True, "output": "done"})()
 
-    out = core.run_once(Config(repo="o/r", pipeline=Pipeline(max_parallel=2)), forge, R())
-    assert len(out) == 2 and len(forge.prs) == 2
+    out = delivery.deliver(Config(repo="o/r"), forge, R(), issue,
+                           "devloop/issue-1", ".", "done")
+    assert forge.prs == ["devloop/issue-1"]
 
 
 def _cmd_forge(auth_ok=True):
@@ -526,7 +520,7 @@ def test_rebase_stage_rebases_clean_and_rebuilds_conflicts():
     a conflicting PR is closed with a rebuild note (counts as an attempt)."""
     import devloop.core as core
 
-    class RebaseForge(_full_flow_forge):
+    class RebaseForge(FlowForge):
         def __init__(self, conflict):
             super().__init__()
             self.conflict = conflict
@@ -553,4 +547,29 @@ def test_rebase_stage_rebases_clean_and_rebuilds_conflicts():
     core.rebase_stale(Config(repo="o/r"), f2, ["devloop/issue-9"])
     assert f2.closed == [77]
     assert any(n.startswith("rebase conflict") for _, n in f2.notes)
-    assert core.failure_count(f2, type("I", (), {"number": 9})()) == 1
+    from devloop import ledger
+    assert ledger.count(f2, type("I", (), {"number": 9})()) == 1
+
+
+if __name__ == "__main__":
+    test_human_only_ops_are_blocked()
+    test_spec_state_machine()
+    test_spec_never_reprocesses_finalized()
+    test_run_once_skips_issues_with_open_pr()
+    test_queue_full_starts_nothing()
+    test_skillcheck_warns_and_never_blocks()
+    test_trigger_authority_defaults_and_overrides()
+    test_access_mode_typo_fails_loudly()
+    test_trigger_labels_are_mutually_exclusive()
+    test_renamed_labels_route()
+    test_config_version_guard()
+    test_parallel_builds_get_distinct_worktrees()
+    test_conflict_gate_defers_overlapping_builds()
+    test_conflict_gate_passes_disjoint_builds()
+    test_failure_budget_resets_on_retry()
+    test_ledger_producer_and_parser_agree()
+    test_review_rounds_carry_prior_findings()
+    test_comment_commands()
+    test_rebase_stage_rebases_clean_and_rebuilds_conflicts()
+    print("all checks passed")
+

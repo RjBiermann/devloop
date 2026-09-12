@@ -1,4 +1,4 @@
-"""Orchestrator: trigger → agent job → verify gate → PR. Pure logic + one loop."""
+"""Orchestrator: trigger → agent job → delivery → review. Pure logic + one loop."""
 
 from __future__ import annotations
 
@@ -8,11 +8,11 @@ import shutil
 import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
 from pathlib import Path
 
 from . import ledger
 from .config import Config
+from .delivery import Outcome, deliver
 from .forge import Forge, Issue
 from .runtime import AgentRuntime
 
@@ -38,21 +38,6 @@ PROMPTS = {
             "instead). Follow repo conventions (AGENTS.md). Do not merge.\n\n"
             "## Issue #{n}: {title}\n{body}",
 }
-
-
-@dataclass
-class Outcome:
-    issue: int
-    branch: str
-    agent_ok: bool
-    gate_ok: bool
-
-
-def run_verify(verify_cmd: str, workdir: str = ".") -> bool:
-    """Runs in the build's worktree — the gate judges what will be delivered,
-    not the (possibly older) default checkout."""
-    r = subprocess.run(verify_cmd, shell=True, capture_output=True, text=True, cwd=workdir)
-    return r.returncode == 0
 
 
 # --- spec loop: draft → clarify ↔ human → propose → approved → finalized ----
@@ -136,6 +121,9 @@ def process_spec(cfg: Config, forge: Forge, runtime: AgentRuntime, number: int) 
 
 def process_issue(cfg: Config, forge: Forge, runtime: AgentRuntime, issue: Issue,
                   workdir: str = ".") -> Outcome:
+    """One build: prompt the agent, then hand the finished work to the
+    delivery module. Agent-run failures report here; everything after a
+    successful run (gate, commit, conflict gate, PR) is deliver()'s job."""
     kind = cfg.kind_for(issue.labels)  # raises if triggers are not exclusive
     branch = f"devloop/issue-{issue.number}"
     # progress heartbeat: the issue timeline shows when a build starts and
@@ -158,75 +146,12 @@ def process_issue(cfg: Config, forge: Forge, runtime: AgentRuntime, issue: Issue
         # A failed agent run must not ship: no commit, no gate, no PR — the
         # error tail goes to the issue for the human, the branch stays local.
         ledger.failure(forge, issue, "agent", note="no PR opened", tail=res.output)
-        return Outcome(issue.number, branch, False, False)
-    gate_ok = True
-    try:
-        if cfg.pipeline.verify:
-            gate_ok = run_verify(cfg.pipeline.verify, workdir)
-        existing = forge.pr_for_branch(branch)
-        delivered = forge.commit_all(
-            f"devloop({kind}): fixes #{issue.number} [agent: {runtime.name}]", workdir)
-        if not delivered and not existing:
-            # nothing staged and nothing unpushed — but the agent may have
-            # pushed the branch itself without opening a PR (half-delivery):
-            # if the branch is ahead of main, deliver it by opening the PR.
-            ahead = subprocess.run(["git", "rev-list", "--count", "origin/HEAD..HEAD"],
-                                   capture_output=True, text=True, cwd=workdir)
-            delivered = ahead.returncode == 0 and ahead.stdout.strip() not in {"", "0"}
-        if not existing and not delivered:
-            # No diff AND no PR — nothing delivered. The agent said something —
-            # that's the finding (question, verdict, or stall); surface it.
-            ledger.failure(forge, issue, "no-changes", note="no PR opened — agent output tail", tail=res.output)
-            return Outcome(issue.number, branch, False, False)
-        if not existing:
-            # delivery conflict gate: the build's scope is only knowable now —
-            # if its files overlap an open devloop PR, park the branch (work is
-            # pushed) and retry after the other PR merges; opening both would
-            # create a merge conflict a human has to untangle.
-            touched = set(forge.branch_files(branch))
-            conflicts = []
-            for head in forge.open_pr_head_branches():
-                if not head.startswith("devloop/") or head == branch:
-                    continue
-                other = forge.pr_for_branch(head)
-                if other and touched & set(forge.pr_files(other)):
-                    conflicts.append(f"#{other} ({head})")
-            if conflicts:
-                ledger.failure(forge, issue, "deferred",
-                               note=f"branch `{branch}` touches files also touched by "
-                                    f"open devloop PR(s) {', '.join(conflicts)}; "
-                                    "will retry on a later sweep after they merge")
-                return Outcome(issue.number, branch, False, False)
-        if existing:
-            # Agent self-delivered (own commit, push, PR). Honor it: gate already
-            # ran above; skip open_pr, correct the bookkeeping.
-            forge.comment(issue.number,
-                          f"Work delivered on `{branch}` — gate "
-                          f"{'PASS' if gate_ok else 'FAIL'}. (agent self-delivered #{existing})")
-        else:
-            forge.open_pr(
-                branch,
-                title=f"devloop({kind}): {issue.title} (#{issue.number})",
-                body=(
-                    f"Closes #{issue.number}\n\n"
-                    f"- agent: `{runtime.name}`\n"
-                    f"- gate: {'PASS' if gate_ok else 'FAIL'}"
-                    + (f" (`{cfg.pipeline.verify}`)" if cfg.pipeline.verify else " (none configured)")
-                    + "\n\nHuman merge required — agents never merge."
-                    + "\n\n## Agent report\n\n" + res.output[-4000:].strip()
-                ),
-            )
-            forge.comment(issue.number, f"Work delivered on `{branch}` — gate {'PASS' if gate_ok else 'FAIL'}.")
-        pr_num = existing or forge.pr_for_branch(branch)
-        review_pr(cfg, forge, runtime, pr_num, branch,
+        return Outcome(issue.number, branch, False)
+    out = deliver(cfg, forge, runtime, issue, branch, workdir, res.output)
+    if out.pr:
+        review_pr(cfg, forge, runtime, out.pr, branch,
                   issue_title=issue.title, issue_body=issue.body)
-    except Exception as e:
-        # Delivery-stage failure (gate, commit, PR creation): the agent did
-        # its work but the pipeline could not ship it — tell the human here,
-        # not just on the runner's stderr.
-        ledger.failure(forge, issue, "delivery", note=f"no PR opened ({type(e).__name__})", tail=str(e))
-        return Outcome(issue.number, branch, False, False)
-    return Outcome(issue.number, branch, res.ok, gate_ok)
+    return out
 
 
 REVIEW_PROMPT = (
