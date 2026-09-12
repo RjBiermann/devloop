@@ -49,7 +49,9 @@ Comment commands (`/retry <issue>`, `/review <pr>`) are the one exception,
 and they are safe: devloop executes them **for** an authorized human (the
 author is access-gated before anything happens), and closing a stale PR on
 `/retry` is executing that human's explicit sanction — not the agent judging
-its own work. Labels create work; commands re-fire it. Trigger labels and
+its own work. The same carve-out closes an issue whose devloop PR a human
+just merged: the merge IS the human's verdict; devloop only records it.
+Labels create work; commands re-fire it. Trigger labels and
 `ready-for-agent` are mutually exclusive. Humans merge.
 
 ## Comment commands

@@ -10,7 +10,7 @@ from pathlib import Path
 
 from . import __version__
 from .config import load
-from .core import handle_command, run_once
+from .core import handle_command, handle_merge, run_once
 from .forge import get_forge
 from .review import review_pr
 from .runtime import get_runtime
@@ -102,6 +102,24 @@ def cmd_command(_args: argparse.Namespace) -> None:
         print(f"command result: {outcome}")
 
 
+def cmd_merged(_args: argparse.Namespace) -> None:
+    """Close out an issue whose devloop PR a human just merged. Runs from
+    CI's pull_request(closed, merged) event; silent exit otherwise (zero
+    token spend — no agent run here, just forge calls)."""
+    path = _args.event or os.environ.get("GITHUB_EVENT_PATH", "")
+    if not path or not Path(path).exists():
+        return
+    ev = json.loads(Path(path).read_text())
+    pr = ev.get("pull_request") or {}
+    if not pr.get("merged"):
+        return
+    cfg = load()
+    forge, _runtime = _runtime(cfg)
+    out = handle_merge(cfg, forge, pr["number"], (pr.get("head") or {}).get("ref") or "")
+    if out:
+        print(f"merge result: {out}")
+
+
 def cmd_watch(_args: argparse.Namespace) -> None:
     cfg = load()
     print(f"watching {cfg.repo} every {cfg.pipeline.poll_seconds}s — ctrl-c to stop")
@@ -119,14 +137,15 @@ def main() -> None:
     ap.add_argument("--version", action="version", version=__version__)
     sub = ap.add_subparsers(required=True)
     for name, fn in [("init", cmd_init), ("once", cmd_once), ("watch", cmd_watch),
-                     ("spec", cmd_spec), ("review", cmd_review), ("command", cmd_command)]:
+                     ("spec", cmd_spec), ("review", cmd_review), ("command", cmd_command),
+                     ("merged", cmd_merged)]:
         s = sub.add_parser(name)
         s.set_defaults(fn=fn)
         if name == "spec":
             s.add_argument("issue", type=int, help="issue number to refine")
         if name == "review":
             s.add_argument("pr", type=int, help="PR number to review")
-        if name == "command":
+        if name == "command" or name == "merged":
             s.add_argument("--event", default="", help="path to GitHub event payload (default $GITHUB_EVENT_PATH)")
     args = ap.parse_args()
     args.fn(args)

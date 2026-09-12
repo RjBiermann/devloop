@@ -146,6 +146,22 @@ def handle_command(cfg: Config, forge: Forge, runtime: AgentRuntime,
         return "failed"
 
 
+def handle_merge(cfg: Config, forge: Forge, pr_number: int, head_branch: str) -> str | None:
+    """A devloop PR was merged by a human: ledger the completion, close the
+    issue. Same carve-out as close_pr — the merge IS the human's sanction;
+    this fires only from a real forge merge event, never agent output.
+    None = not a devloop PR (caller's YAML gate should already know)."""
+    if not head_branch.startswith("devloop/issue-"):
+        return None
+    try:
+        n = int(head_branch.rsplit("-", 1)[-1])
+    except ValueError:
+        return None
+    ledger.merged(forge, n, pr_number)
+    forge.complete_issue(n)
+    return f"completed issue #{n}"
+
+
 def run_once(cfg: Config, forge: Forge, runtime: AgentRuntime) -> list[Outcome]:
     open_heads = forge.open_pr_head_branches()
     devloop_heads = [h for h in open_heads if h.startswith("devloop/")]

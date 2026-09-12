@@ -774,3 +774,54 @@ if __name__ == "__main__":
     test_version_bump()
     print("all checks passed")
 
+
+
+def test_merged_pr_completes_issue():
+    """A human-merged devloop PR closes its issue — executing the human's
+    merge sanction (same carve-out as close_pr), on the ledger record."""
+    import devloop.core as core
+    from devloop.config import Config
+    from devloop.forge.base import Comment
+
+    class F(Forge):
+        def __init__(self):
+            self.notes, self.completed = [], []
+
+        def comment(self, n, body): self.notes.append((n, body))
+        def complete_issue(self, n): self.completed.append(n)
+
+    forge = F()
+    cfg = Config(repo="o/r")
+
+    # devloop PR merged → ledger entry + issue closed
+    out = core.handle_merge(cfg, forge, 55, "devloop/issue-9")
+    assert out == "completed issue #9"
+    assert forge.notes and forge.notes[0][1].startswith("devloop PR merged #55")
+    assert forge.completed == [9]
+
+    # non-devloop branch → no-op (never touches a stranger's issue)
+    f2 = F()
+    assert core.handle_merge(cfg, f2, 56, "feature/x") is None
+    assert not f2.notes and not f2.completed
+
+    # malformed devloop branch → no-op, not a crash
+    f3 = F()
+    assert core.handle_merge(cfg, f3, 57, "devloop/issue-") is None
+    assert not f3.completed
+
+    # guardrail unchanged: close_issue stays human-only for all other callers
+    try:
+        forge.close_issue(9)
+    except GuardrailViolation:
+        pass
+    else:
+        raise AssertionError("close_issue must stay human-only")
+
+    # ledger protocol: the completion marker is not counted as an attempt
+    class LF(Forge):
+        def comments(self, n):
+            return [Comment("x", "devloop PR merged #55 — closing the issue"),
+                    Comment("x", "agent run FAILED — boom")]
+
+    from devloop import ledger
+    assert ledger.count(LF(), 9) == 1  # merge ≠ an attempt; the failure is
