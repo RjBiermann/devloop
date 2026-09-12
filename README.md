@@ -45,8 +45,25 @@ An agent running under devloop can **never**:
 - apply a trigger label (`ai-fix`, `ai-build`, `ai-remove`)
 - close an issue it was spawned from
 
-Labels create work; commands re-fire it. Trigger labels and `ready-for-agent`
-are mutually exclusive. Humans merge.
+Comment commands (`/retry <issue>`, `/review <pr>`) are the one exception,
+and they are safe: devloop executes them **for** an authorized human (the
+author is access-gated before anything happens), and closing a stale PR on
+`/retry` is executing that human's explicit sanction — not the agent judging
+its own work. Labels create work; commands re-fire it. Trigger labels and
+`ready-for-agent` are mutually exclusive. Humans merge.
+
+## Comment commands
+
+Post in an issue or PR thread (authorized users only — same `[access]`
+policy as everything else):
+
+- `/retry <issue>` — reset the attempt budget, close the issue's stale
+  devloop PR if any, and re-fire the build
+- `/review <pr>` — run the AI pre-review rounds on an open PR on demand
+  (`/review` inside a PR thread targets that PR)
+
+The workflow triggers on `issue_comment` with a YAML-level gate so plain
+comments never spin up a runner job; non-command comments cost nothing.
 
 ## Quickstart
 

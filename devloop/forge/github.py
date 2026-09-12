@@ -86,6 +86,10 @@ class GitHub(Forge):
                     "--paginate", "--jq", "[.[] | {author: .user.login, body: .body}]"])
         return [Comment(it["author"], it["body"]) for it in json.loads(out or "[]")]
 
+    def pr_comments(self, pr_number: int) -> list[Comment]:
+        # PR comments live on the issue endpoint with the same number
+        return self.comments(pr_number)
+
     def open_pr_head_branches(self) -> list[str]:
         out = _run(["gh", "pr", "list", "-R", self.repo, "--state", "open",
                     "--json", "headRefName", "--jq", "[.[].headRefName]"])
@@ -144,6 +148,10 @@ class GitHub(Forge):
 
     def open_pr(self, branch: str, title: str, body: str) -> None:
         _run(["gh", "pr", "create", "--head", branch, "--title", title, "--body", body])
+
+    def close_pr(self, pr_number: int, reason: str) -> None:
+        _run(["gh", "pr", "close", str(pr_number), "-R", self.repo,
+              "--comment", reason, "--delete-branch"])
 
     def pr_files(self, pr_number: int) -> list[str]:
         out = _run(["gh", "pr", "view", str(pr_number), "-R", self.repo,

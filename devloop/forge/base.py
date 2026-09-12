@@ -59,9 +59,22 @@ class Forge:
     def open_pr(self, branch: str, title: str, body: str) -> None:
         raise NotImplementedError
 
+    def close_pr(self, pr_number: int, reason: str) -> None:
+        """Close a PR. NOT in HUMAN_ONLY — deliberately: /retry from an
+        authorized human is the sanction, and devloop closing the stale
+        delivery is executing that human's explicit command. Still guarded
+        one layer down: handle_command is the only caller, and it
+        access-gates the author first."""
+        raise NotImplementedError
+
     def pr_files(self, pr_number: int) -> list[str]:
         """Files touched by an open PR (for the delivery conflict gate)."""
         raise NotImplementedError
+
+    def pr_comments(self, pr_number: int) -> list[Comment]:
+        """PR review-thread comments — the reviewer reads the thread so
+        human replies ("already fixed", "out of scope") aren't ignored."""
+        return []
 
     def branch_files(self, branch: str) -> list[str]:
         """Files a pushed branch changes vs the default branch — the

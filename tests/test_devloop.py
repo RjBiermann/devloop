@@ -391,3 +391,103 @@ def test_conflict_gate_passes_disjoint_builds():
 
     out = core.run_once(Config(repo="o/r", pipeline=Pipeline(max_parallel=2)), forge, R())
     assert len(out) == 2 and len(forge.prs) == 2
+
+
+def _cmd_forge(auth_ok=True):
+    from devloop.forge.base import Comment
+
+    class CmdForge(Forge):
+        def __init__(self):
+            self.closed, self.notes, self.reviewed, self.built = [], [], [], []
+
+        def is_owner(self, a): return auth_ok and a == "boss"
+        def is_maintainer(self, a): return auth_ok and a in {"boss", "dev"}
+        def is_collaborator(self, a): return auth_ok and a in {"boss", "dev", "c"}
+
+        def issue(self, n):
+            return type("I", (), {"number": n, "title": f"t{n}", "body": "", "labels": ["ai-fix"]})()
+
+        def pr_for_branch(self, b):
+            return 55 if b == "devloop/issue-9" else None
+
+        def close_pr(self, n, reason): self.closed.append((n, reason))
+        def comment(self, n, body): self.notes.append((n, body))
+        def pr_diff_by_number(self, n): return "diff"
+        def pr_body(self, n): return "Closes #9"
+        def pr_comments(self, n):
+            from devloop.forge.base import Comment
+            return [Comment("human", "out of scope — tracked in #12")] if n == 55 else []
+        def pr_comment(self, n, body): self.notes.append((n, body))
+
+        def comments(self, n):
+            # ledger: one failure, then a reset, then one more failure
+            return [Comment("boss", "agent run FAILED — no PR opened."),
+                    Comment("dev", "build reset by `/retry` — attempt budget cleared"),
+                    Comment("boss", "delivery FAILED (x)")]
+
+    return CmdForge()
+
+
+def test_failure_budget_resets_on_retry():
+    import devloop.core as core
+
+    forge = _cmd_forge()
+    issue = type("I", (), {"number": 9})()
+    assert core.failure_count(forge, issue) == 1  # only failures after the reset
+
+
+def test_review_rounds_carry_prior_findings():
+    import devloop.core as core
+    from devloop.config import Config
+
+    forge = _cmd_forge()
+    seen = []
+
+    class R:
+        name = "fake"
+        def run(self, prompt, cwd, timeout):
+            seen.append(prompt)
+            return type("Res", (), {"ok": True, "output": f"finding round {len(seen)}"})()
+
+    core.review_pr(Config(repo="o/r", pipeline=Pipeline(review_rounds=2)), forge, R(), 55)
+    assert "finding round 1" in seen[1]     # round 2 saw round 1's findings
+    assert "Your earlier findings" in seen[1]
+
+
+def test_comment_commands():
+    import devloop.core as core
+    from devloop.config import Config
+
+    cfg = Config(repo="o/r")
+    forge = _cmd_forge()
+
+    class R:
+        name = "fake"
+        def run(self, prompt, cwd, timeout):
+            return type("Res", (), {"ok": True, "output": "LGTM"})()
+
+    # not a command → untouched
+    assert core.handle_command(cfg, forge, R(), "boss", "looks good", 9) is None
+    # unauthorized → ignored, loudly
+    assert core.handle_command(cfg, forge, R(), "stranger", "/review", 9) == "ignored:not-authorized"
+    assert any("not authorized" in b for _, b in forge.notes)
+    # /review executes review rounds
+    assert core.handle_command(cfg, forge, R(), "dev", "/review", 9) == "reviewed PR #9"
+    # /retry closes the stale PR and re-fires the build
+    orig = core.process_issue
+    core.process_issue = lambda cfg, f, r, issue, workdir=".": (forge.built.append(issue.number), None)[1]
+    try:
+        assert core.handle_command(cfg, forge, R(), "boss", "/retry 9", 1) == "retried issue #9"
+    finally:
+        core.process_issue = orig
+    assert forge.closed and forge.closed[0][0] == 55
+    # unknown command
+    assert core.handle_command(cfg, forge, R(), "boss", "/merge everything", 9) == "ignored:unknown"
+    # guardrail unchanged: direct close_issue from agent code still blocked
+    from devloop.guardrails import GuardrailViolation
+    try:
+        forge.close_issue(9)
+    except GuardrailViolation:
+        pass
+    else:
+        raise AssertionError("close_issue must stay human-only")

@@ -1,8 +1,10 @@
-"""CLI: devloop init | once | watch | spec"""
+"""CLI: devloop init | once | watch | spec | review | command"""
 
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import shutil
 import sys
 import time
@@ -79,6 +81,32 @@ def cmd_review(args: argparse.Namespace) -> None:
     print(f"reviewed PR #{args.pr}: {cfg.pipeline.review_rounds} round(s) posted")
 
 
+def cmd_command(_args: argparse.Namespace) -> None:
+    """Execute one comment command. Runs from CI's issue_comment event:
+    reads the event payload, access-gates the author, executes.
+    Silent exit when the comment isn't a command (zero token spend)."""
+    path = _args.event or os.environ.get("GITHUB_EVENT_PATH", "")
+    if not path or not Path(path).exists():
+        return  # not a CI comment context — nothing to do
+    ev = json.loads(Path(path).read_text())
+    comment = ev.get("comment") or {}
+    body = (comment.get("body") or "").strip()
+    if not body.startswith("/"):
+        return
+    issue = ev.get("issue") or {}
+    number = issue.get("number")
+    author = (comment.get("user") or {}).get("login") or ""
+    if not (number and author):
+        print("event payload missing issue/comment fields — nothing to do", file=sys.stderr)
+        return
+    cfg = load()
+    _warn_bad_skills()
+    forge, runtime = _runtime(cfg)
+    outcome = handle_command(cfg, forge, runtime, author, body, number)
+    if outcome:
+        print(f"command result: {outcome}")
+
+
 def cmd_watch(_args: argparse.Namespace) -> None:
     cfg = load()
     print(f"watching {cfg.repo} every {cfg.pipeline.poll_seconds}s — ctrl-c to stop")
@@ -96,12 +124,14 @@ def main() -> None:
     ap.add_argument("--version", action="version", version=__version__)
     sub = ap.add_subparsers(required=True)
     for name, fn in [("init", cmd_init), ("once", cmd_once), ("watch", cmd_watch),
-                     ("spec", cmd_spec), ("review", cmd_review)]:
+                     ("spec", cmd_spec), ("review", cmd_review), ("command", cmd_command)]:
         s = sub.add_parser(name)
         s.set_defaults(fn=fn)
         if name == "spec":
             s.add_argument("issue", type=int, help="issue number to refine")
         if name == "review":
             s.add_argument("pr", type=int, help="PR number to review")
+        if name == "command":
+            s.add_argument("--event", default="", help="path to GitHub event payload (default $GITHUB_EVENT_PATH)")
     args = ap.parse_args()
     args.fn(args)

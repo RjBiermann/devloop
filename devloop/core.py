@@ -267,15 +267,29 @@ def review_pr(cfg: Config, forge: Forge, runtime: AgentRuntime, pr_number: int,
             it = forge.issue(int(m.group(1)))
             issue_title, issue_body = it.title, it.body
     prompt = review_prompt(cfg, issue_title, issue_body)
+    # the reviewer reads the PR thread once at the start — human replies
+    # ("already fixed elsewhere", "out of scope") must not be ignored
+    thread = [f"- {c.author}: {c.body.strip()[:500]}"
+              for c in forge.pr_comments(pr_number)]
+    prior: list[str] = []
     for rnd in range(1, cfg.pipeline.review_rounds + 1):
         # diff straight from the forge — GitHub computes it authoritatively;
         # local origin/HEAD-based diffs proved unreliable mid-build
         diff = forge.pr_diff_by_number(pr_number)
-        res = runtime.run(prompt.replace("{diff}", diff[:40000]),
-                          cwd=".", timeout=cfg.pipeline.timeout)
+        round_prompt = prompt.replace("{diff}", diff[:40000])
+        if thread:
+            round_prompt += "\n\n## The PR thread so far\n" + "\n".join(thread)
+        if prior:
+            # rounds are isolated sessions — carry the prior findings in, so
+            # round N verifies/extends rather than repeats round 1
+            round_prompt += ("\n\n## Your earlier findings (verify against the "
+                             "current diff; drop resolved ones, keep and "
+                             "sharpen the rest)\n" + "\n---\n".join(prior))
+        res = runtime.run(round_prompt, cwd=".", timeout=cfg.pipeline.timeout)
         if not res.ok:
             forge.pr_comment(pr_number, f"AI pre-review round {rnd}: reviewer run failed.")
             return
+        prior.append(res.output.strip())
         forge.pr_comment(pr_number, f"**AI pre-review, round {rnd}/{cfg.pipeline.review_rounds}**\n\n"
                                  + res.output.strip()[-4000:])
         if "LGTM" in res.output[-200:].upper():
@@ -287,15 +301,64 @@ FAILURE_MARKERS = (
     "build deferred",
 )
 
+RESET_MARKER = "build reset by"
+
 
 def failure_count(forge: Forge, issue: Issue) -> int:
     """Past failed attempts, counted from the issue's own comment ledger —
     no extra state. Guards the scheduled sweeps against burning tokens on
-    a poison task forever: after pipeline.max_attempts, a human re-labels.
+    a poison task forever: after pipeline.max_attempts, a human re-labels
+    (or issues `/retry`, which resets the budget from that point).
     Deferrals count too — a build that keeps losing the conflict gate is
     re-running its agent each sweep; the cap bounds that spend."""
-    return sum(1 for c in forge.comments(issue.number)
-               if any(c.body.startswith(m) for m in FAILURE_MARKERS))
+    count = 0
+    for c in forge.comments(issue.number):
+        if c.body.startswith(RESET_MARKER):
+            count = 0
+        elif any(c.body.startswith(m) for m in FAILURE_MARKERS):
+            count += 1
+    return count
+
+
+def handle_command(cfg: Config, forge: Forge, runtime: AgentRuntime,
+                   author: str, text: str, context_number: int) -> str | None:
+    """Execute one comment command (`/review <pr>`, `/retry <issue>`).
+    The wall stays up: commands are executed BY devloop FOR an authorized
+    human — the author is access-gated before anything happens, and the
+    agent's own comments never contain commands (this is invoked from a
+    CI event, not from reading comment contents)."""
+    text = text.strip()
+    if not text.startswith("/"):
+        return None
+    cmd, _, arg = text.partition(" ")
+    arg = arg.strip()
+    if not forge.is_authorized(author, cfg.access):
+        forge.comment(context_number,
+                      f"command `{cmd}` ignored — `{author}` is not authorized "
+                      "to fire devloop (access policy)")
+        return "ignored:not-authorized"
+    try:
+        if cmd == "/review":
+            pr = int(arg) if arg else context_number
+            review_pr(cfg, forge, runtime, pr)
+            return f"reviewed PR #{pr}"
+        if cmd == "/retry":
+            n = int(arg) if arg else context_number
+            existing = forge.pr_for_branch(f"devloop/issue-{n}")
+            if existing:
+                # the human sanctioned discarding the delivery — devloop is
+                # executing that command, not judging the work itself
+                forge.close_pr(existing, f"closed by `/retry` from {author} — rebuild incoming")
+            forge.comment(n, f"{RESET_MARKER} `/retry` from {author} — attempt budget cleared, rebuilding")
+            process_issue(cfg, forge, runtime, forge.issue(n))
+            return f"retried issue #{n}"
+        forge.comment(context_number,
+                      f"unknown command `{cmd}` — supported: `/review <pr>`, `/retry <issue>`")
+        return "ignored:unknown"
+    except Exception as e:
+        forge.comment(context_number,
+                      f"command `{cmd}` FAILED ({type(e).__name__}): {str(e)[:500]}")
+        return "failed"
 
 
 def run_once(cfg: Config, forge: Forge, runtime: AgentRuntime) -> list[Outcome]:

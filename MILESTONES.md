@@ -28,15 +28,23 @@
 - [ ] **First end-to-end dogfood run** on a real repo: one real spec → clarify
   → decompose → build → PR. The MVP has never processed a real issue; the
   failures of that run reshape everything below. Do this before any of the rest.
-- [ ] `/retry`, `/review`, `/triage` comment commands (collaborators only)
-- [ ] Review rounds: AI pre-review N rounds pushing fixes, then human
+- [x] `/retry`, `/review` comment commands — access-gated via
+  `forge.is_authorized`; `/retry` resets the attempt budget, closes the
+  stale devloop PR (executing an authorized human's sanction), re-fires;
+  `/review` runs review rounds on demand from the thread. YAML-level gate
+  in the workflow so non-command comments never spin up a runner.
+  `/triage` waits for the triage agent (M2+)
+- [x] Review rounds: AI pre-review N rounds, findings-only, each round
+  carries the thread + its prior findings (stateless sessions that see
+  the complete review state); `LGTM` stops the budget early; customizable
+  via repo `skills/pre-review/SKILL.md`; on-demand via `devloop review <pr>`
 - [ ] Runtime permission denylists: guardrails must also bind the agent's
   shell (`gh`/`git` calls the agent makes itself), via opencode/claude tool
   policies — the adapter-level wall is advisory until this lands
-- [x] Conflict management: builds serialized by default (`max_parallel = 1`)
-  + partition skill (touch-sets per story, overlaps merged or sequenced,
-  shared plumbing single-owner) — parallel builds only for disjoint
-  touch-sets, raised deliberately
+- [x] Conflict management: parallel builds with per-build git worktrees +
+  a delivery conflict gate (builds overlapping an open devloop PR's files
+  defer to a later sweep; disjoint builds ship in parallel) —
+  `max_parallel` is a throughput choice, never a correctness one
 - [ ] GitHub Enterprise Server: base-URL config on the GitHub adapter
   (SaaS + self-hosted, same adapter)
 - [ ] Skills freshness: `.devloop/lock` (pack version + per-skill content

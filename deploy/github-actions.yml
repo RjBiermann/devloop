@@ -1,14 +1,29 @@
-# devloop on GitHub: label events and comments fire a run; schedule fires the monitor.
-# Requires: DEVLOOP agent CLI + gh authenticated in the runner.
+# devloop on GitHub: label events, comment commands, and schedule fire runs.
+# Requires: agent CLI (e.g. pi) + gh authenticated in the runner.
 name: devloop
 on:
   issues:
     types: [labeled]
+  issue_comment:
+    types: [created]
   workflow_dispatch:
+  schedule:
+    - cron: "*/30 * * * *"   # self-healing: pending labels survive skipped/failed runs
+
+concurrency:
+  group: devloop-pipeline
+  cancel-in-progress: false
 
 jobs:
   run:
-    if: github.event.label.name == 'ai-fix' || github.event.label.name == 'ai-build' || github.event.label.name == 'ai-remove'
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule' ||
+      github.event.label.name == 'ai-fix' ||
+      github.event.label.name == 'ai-build' ||
+      github.event.label.name == 'ai-remove' ||
+      github.event.label.name == 'ai-task' ||
+      (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/'))
     runs-on: ubuntu-latest
     permissions:
       issues: write
@@ -20,6 +35,13 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - run: pip install devloop  # or: pip install git+https://github.com/YOURORG/devloop
-      - run: devloop once
+      - name: Run pipeline
+        if: github.event_name != 'issue_comment'
+        run: devloop once
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run comment command
+        if: github.event_name == 'issue_comment'
+        run: devloop command
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
