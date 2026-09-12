@@ -44,17 +44,28 @@ class Forge:
         return []
 
     # --- write side ------------------------------------------------------
-    def start_work(self, number: int, branch: str) -> None:
-        """Create `branch` from the default branch and check it out."""
+    def start_work(self, number: int, branch: str, workdir: str = ".") -> None:
+        """Create `branch` from the default branch, in its own git worktree
+        at `workdir` (parallel builds each get a private checkout — agents
+        must never share a working tree)."""
         raise NotImplementedError
 
-    def commit_all(self, message: str) -> bool:
+    def commit_all(self, message: str, workdir: str = ".") -> bool:
         """Commit + push all changes. Returns False when nothing changed —
         an agent run that produces no diff is a failed delivery, not a
         silent success (callers report the agent's output to the issue)."""
         raise NotImplementedError
 
     def open_pr(self, branch: str, title: str, body: str) -> None:
+        raise NotImplementedError
+
+    def pr_files(self, pr_number: int) -> list[str]:
+        """Files touched by an open PR (for the delivery conflict gate)."""
+        raise NotImplementedError
+
+    def branch_files(self, branch: str) -> list[str]:
+        """Files a pushed branch changes vs the default branch — the
+        conflict gate's view of a build's scope before it has a PR."""
         raise NotImplementedError
 
     def comment(self, number: int, body: str) -> None:

@@ -7,6 +7,7 @@ on dev machines and GitHub-hosted runners, and maps 1:1 to forge operations.
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 
 from .base import Comment, Forge, Issue
@@ -105,30 +106,51 @@ class GitHub(Forge):
         return self._permission(author) in {"admin", "maintain", "write"}
 
     # --- git side (assumes the working tree IS the target repo) ----------
-    def start_work(self, number: int, branch: str) -> None:
+    def start_work(self, number: int, branch: str, workdir: str = ".") -> None:
         _run(["git", "fetch", "origin"])
+        # heal crash leftovers: an uncleanly-removed worktree leaves admin
+        # entries that block worktree add on the same branch/path forever
+        _run(["git", "worktree", "prune"])
+        shutil.rmtree(workdir, ignore_errors=True)
         default = _run(["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"]).strip()
-        _run(["git", "checkout", "-B", branch, default])
-        _run(["git", "push", "-u", "origin", branch])
+        _run(["git", "worktree", "add", "-B", branch, workdir, default])
+        # force when the remote branch already exists (a deferred or abandoned
+        # build): this branch is devloop-owned, the worktree is fresh from main
+        exists = subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", f"origin/{branch}"],
+            capture_output=True).returncode == 0
+        push = ["git", "push", "--force", "-u", "origin", branch] if exists \
+            else ["git", "push", "-u", "origin", branch]
+        _run(push, cwd=workdir)
 
-    def commit_all(self, message: str) -> bool:
+    def commit_all(self, message: str, workdir: str = ".") -> bool:
         """Commit + push all changes. Returns False when nothing changed —
         an agent run that produces no diff is a failed delivery, not a
         silent success (callers report the agent's output to the issue)."""
-        _run(["git", "add", "-A"])
-        r = subprocess.run(["git", "diff", "--cached", "--quiet"])
+        _run(["git", "add", "-A"], cwd=workdir)
+        r = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=workdir)
         if r.returncode == 0:
             # nothing staged — but the agent may have committed itself
             # (prompts say "leave the work committed"). Push unpushed commits.
             ahead = subprocess.run(["git", "rev-list", "--count", "@{u}..HEAD"],
-                                   capture_output=True, text=True)
+                                   capture_output=True, text=True, cwd=workdir)
             if ahead.returncode == 0 and ahead.stdout.strip() not in {"", "0"}:
-                _run(["git", "push"])
+                _run(["git", "push"], cwd=workdir)
                 return True
             return False  # genuinely empty run
-        _run(["git", "commit", "-m", message])
-        _run(["git", "push"])
+        _run(["git", "commit", "-m", message], cwd=workdir)
+        _run(["git", "push"], cwd=workdir)
         return True
 
     def open_pr(self, branch: str, title: str, body: str) -> None:
         _run(["gh", "pr", "create", "--head", branch, "--title", title, "--body", body])
+
+    def pr_files(self, pr_number: int) -> list[str]:
+        out = _run(["gh", "pr", "view", str(pr_number), "-R", self.repo,
+                    "--json", "files", "--jq", "[.files[].path]"])
+        return json.loads(out or "[]")
+
+    def branch_files(self, branch: str) -> list[str]:
+        default = _run(["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"]).strip()
+        out = _run(["git", "diff", "--name-only", f"{default}...{branch}"])
+        return [f for f in out.splitlines() if f.strip()]

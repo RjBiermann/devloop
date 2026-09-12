@@ -19,7 +19,11 @@ argv = ["opencode", "run"] # prompt is appended as the final argument
 [pipeline]
 verify = ""              # the gate. e.g. "make verify" — empty = skip
 review_rounds = 2          # AI pre-review rounds before human review
-max_parallel = 1           # concurrent builds. 1 = serial: no merge conflicts by construction
+max_parallel = 1           # concurrent builds. Each build gets its own git
+                           # worktree; deliveries that would overlap files with
+                           # an open devloop PR are deferred to a later sweep,
+                           # so raising this is safe — it changes throughput,
+                           # not correctness (and not AI spend per issue)
 poll_seconds = 300         # watch-mode poll interval
 timeout = 1800             # per-agent-run timeout, seconds
 

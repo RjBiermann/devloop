@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import subprocess
 import re
+import shutil
 import sys
+import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -42,8 +45,10 @@ class Outcome:
     gate_ok: bool
 
 
-def run_verify(verify_cmd: str) -> bool:
-    r = subprocess.run(verify_cmd, shell=True, capture_output=True, text=True)
+def run_verify(verify_cmd: str, workdir: str = ".") -> bool:
+    """Runs in the build's worktree — the gate judges what will be delivered,
+    not the (possibly older) default checkout."""
+    r = subprocess.run(verify_cmd, shell=True, capture_output=True, text=True, cwd=workdir)
     return r.returncode == 0
 
 
@@ -126,14 +131,15 @@ def process_spec(cfg: Config, forge: Forge, runtime: AgentRuntime, number: int) 
     return parse_status(res.output) or phase
 
 
-def process_issue(cfg: Config, forge: Forge, runtime: AgentRuntime, issue: Issue) -> Outcome:
+def process_issue(cfg: Config, forge: Forge, runtime: AgentRuntime, issue: Issue,
+                  workdir: str = ".") -> Outcome:
     kind = cfg.kind_for(issue.labels)  # raises if triggers are not exclusive
     branch = f"devloop/issue-{issue.number}"
-    forge.start_work(issue.number, branch)
+    forge.start_work(issue.number, branch, workdir)
     res = None
     try:
         res = runtime.run(PROMPTS[kind].format(n=issue.number, title=issue.title, body=issue.body),
-                          cwd=".", timeout=cfg.pipeline.timeout)
+                          cwd=workdir, timeout=cfg.pipeline.timeout)
     except Exception as e:
         # Timeout/explosion mid-run: no delivery, but the human must know.
         forge.comment(issue.number,
@@ -149,16 +155,16 @@ def process_issue(cfg: Config, forge: Forge, runtime: AgentRuntime, issue: Issue
     gate_ok = True
     try:
         if cfg.pipeline.verify:
-            gate_ok = run_verify(cfg.pipeline.verify)
+            gate_ok = run_verify(cfg.pipeline.verify, workdir)
         existing = forge.pr_for_branch(branch)
         delivered = forge.commit_all(
-            f"devloop({kind}): fixes #{issue.number} [agent: {runtime.name}]")
+            f"devloop({kind}): fixes #{issue.number} [agent: {runtime.name}]", workdir)
         if not delivered and not existing:
             # nothing staged and nothing unpushed — but the agent may have
             # pushed the branch itself without opening a PR (half-delivery):
             # if the branch is ahead of main, deliver it by opening the PR.
             ahead = subprocess.run(["git", "rev-list", "--count", "origin/HEAD..HEAD"],
-                                   capture_output=True, text=True)
+                                   capture_output=True, text=True, cwd=workdir)
             delivered = ahead.returncode == 0 and ahead.stdout.strip() not in {"", "0"}
         if not existing and not delivered:
             # No diff AND no PR — nothing delivered. The agent said something —
@@ -167,6 +173,25 @@ def process_issue(cfg: Config, forge: Forge, runtime: AgentRuntime, issue: Issue
                           f"agent made NO changes — no PR opened. agent output tail:\n"
                           f"```\n{res.output[-1200:]}\n```")
             return Outcome(issue.number, branch, False, False)
+        if not existing:
+            # delivery conflict gate: the build's scope is only knowable now —
+            # if its files overlap an open devloop PR, park the branch (work is
+            # pushed) and retry after the other PR merges; opening both would
+            # create a merge conflict a human has to untangle.
+            touched = set(forge.branch_files(branch))
+            conflicts = []
+            for head in forge.open_pr_head_branches():
+                if not head.startswith("devloop/") or head == branch:
+                    continue
+                other = forge.pr_for_branch(head)
+                if other and touched & set(forge.pr_files(other)):
+                    conflicts.append(f"#{other} ({head})")
+            if conflicts:
+                forge.comment(issue.number,
+                              f"build deferred — branch `{branch}` touches files also "
+                              f"touched by open devloop PR(s) {', '.join(conflicts)}; "
+                              "will retry on a later sweep after they merge")
+                return Outcome(issue.number, branch, False, False)
         if existing:
             # Agent self-delivered (own commit, push, PR). Honor it: gate already
             # ran above; skip open_pr, correct the bookkeeping.
@@ -248,8 +273,6 @@ def review_pr(cfg: Config, forge: Forge, runtime: AgentRuntime, pr_number: int,
         diff = forge.pr_diff_by_number(pr_number)
         res = runtime.run(prompt.replace("{diff}", diff[:40000]),
                           cwd=".", timeout=cfg.pipeline.timeout)
-        res = runtime.run(prompt.format(diff=diff[:40000]),
-                          cwd=".", timeout=cfg.pipeline.timeout)
         if not res.ok:
             forge.pr_comment(pr_number, f"AI pre-review round {rnd}: reviewer run failed.")
             return
@@ -260,14 +283,17 @@ def review_pr(cfg: Config, forge: Forge, runtime: AgentRuntime, pr_number: int,
 
 
 FAILURE_MARKERS = (
-    "agent run FAILED", "agent made NO changes", "delivery FAILED"
+    "agent run FAILED", "agent made NO changes", "delivery FAILED",
+    "build deferred",
 )
 
 
 def failure_count(forge: Forge, issue: Issue) -> int:
     """Past failed attempts, counted from the issue's own comment ledger —
     no extra state. Guards the scheduled sweeps against burning tokens on
-    a poison task forever: after pipeline.max_attempts, a human re-labels."""
+    a poison task forever: after pipeline.max_attempts, a human re-labels.
+    Deferrals count too — a build that keeps losing the conflict gate is
+    re-running its agent each sweep; the cap bounds that spend."""
     return sum(1 for c in forge.comments(issue.number)
                if any(c.body.startswith(m) for m in FAILURE_MARKERS))
 
@@ -275,13 +301,13 @@ def failure_count(forge: Forge, issue: Issue) -> int:
 def run_once(cfg: Config, forge: Forge, runtime: AgentRuntime) -> list[Outcome]:
     open_heads = forge.open_pr_head_branches()
     devloop_heads = [h for h in open_heads if h.startswith("devloop/")]
+    slots = cfg.pipeline.max_parallel - len(devloop_heads)
     # Two layers of conflict prevention:
     #   1. skip issues that already have a devloop PR — never rebuild delivered work
-    #   2. never exceed max_parallel in-flight builds — overlapping touch-sets
-    #      can only conflict, so by default builds run serially (partition skill
-    #      designs touch-sets disjoint; raising max_parallel is a deliberate
-    #      throughput choice backed by that discipline)
-    if len(devloop_heads) >= cfg.pipeline.max_parallel:
+    #   2. never exceed max_parallel in-flight builds; builds themselves get a
+    #      per-PR conflict gate at delivery (files overlapping an open devloop
+    #      PR defer instead of opening a conflicting PR)
+    if slots <= 0:
         # Queue full — say so, loudly. Silent green no-ops are the worst
         # failure mode a pipeline can have (the human believes it ran).
         print(f"queue full: {len(devloop_heads)} build(s) in flight "
@@ -290,7 +316,7 @@ def run_once(cfg: Config, forge: Forge, runtime: AgentRuntime) -> list[Outcome]:
               file=sys.stderr)
         return []
     delivered = set(open_heads)
-    out = []
+    candidates = []
     for issue in forge.issues_with_labels(cfg.labels.triggers):
         if f"devloop/issue-{issue.number}" in delivered:
             continue
@@ -298,13 +324,34 @@ def run_once(cfg: Config, forge: Forge, runtime: AgentRuntime) -> list[Outcome]:
             print(f"#{issue.number}: {failure_count(forge, issue)} failed attempts — "
                   "skipped; re-label to retry", file=sys.stderr)
             continue
+        candidates.append(issue)
+        if len(candidates) >= slots:
+            break
+    if not candidates:
+        return []
+
+    # One private git worktree per build: parallel agents must not share a
+    # working tree (they race on git state). Removed when the build ends.
+    dirs: dict[int, str] = {}
+    parents: dict[int, str] = {}
+    for issue in candidates:
+        parents[issue.number] = tempfile.mkdtemp(prefix=f"devloop-{issue.number}-")
+        dirs[issue.number] = parents[issue.number] + "/tree"
+
+    def worker(issue: Issue) -> Outcome:
         try:
-            out.append(process_issue(cfg, forge, runtime, issue))
+            return process_issue(cfg, forge, runtime, issue, dirs[issue.number])
         except Exception as e:
             # One broken issue must not block the queue (head-of-line blocking
             # would retry it forever in watch mode and starve everything else).
-            out.append(Outcome(issue.number, f"devloop/issue-{issue.number}", False, False))
             print(f"#{issue.number}: failed: {e}", file=sys.stderr)
-        if len(out) >= cfg.pipeline.max_parallel - len(devloop_heads):
-            break
+            return Outcome(issue.number, f"devloop/issue-{issue.number}", False, False)
+        finally:
+            shutil.rmtree(parents[issue.number], ignore_errors=True)
+
+    out: list[Outcome] = []
+    with ThreadPoolExecutor(max_workers=slots) as pool:
+        for r in pool.map(worker, candidates):
+            out.append(r)
+    subprocess.run(["git", "worktree", "prune"], capture_output=True)
     return out

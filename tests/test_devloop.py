@@ -119,18 +119,16 @@ def test_run_once_skips_issues_with_open_pr():
 
     orig = core.process_issue
 
-    def spy(cfg, forge, runtime, issue):
-        processed.append(issue.number)
-        raise SystemExit  # stop after first real processing attempt
+    def spy(cfg, forge, runtime, issue, workdir="."):
+        processed.append((issue.number, workdir))
+        return type("O", (), {"issue": issue.number, "branch": "", "delivered": True, "gate": True})()
 
     core.process_issue = spy
     try:
         run_once(cfg, FakeForge(), FakeRuntime())
-    except SystemExit:
-        pass
     finally:
         core.process_issue = orig
-    assert processed == [2]  # #1 skipped: PR already open
+    assert [n for n, _ in processed] == [2]  # #1 skipped: PR already open
 
 
 def test_trigger_authority_defaults_and_overrides():
@@ -288,3 +286,108 @@ if __name__ == "__main__":
     test_renamed_labels_route()
     test_config_version_guard()
     print("all checks passed")
+
+
+def _full_flow_forge(open_heads=(), pr_files=None, calls=None):
+    """FakeForge wired for the full process_issue flow: agent 'commits and
+    pushes' (commit_all True), open_pr recorded, branch_files/pr_files
+    overridable to stage conflict-gate scenarios."""
+    from devloop.forge.base import Forge
+
+    class FlowForge(Forge):
+        def __init__(self):
+            self.prs = []
+            self.notes = []
+            self.cwds = []
+
+        def issues_with_labels(self, _l):
+            return [type("I", (), {"number": n, "title": f"t{n}", "body": "", "labels": ["ai-fix"]})
+                    for n in (1, 2)]
+
+        def open_pr_head_branches(self):
+            return list(open_heads)
+
+        def pr_for_branch(self, _b):
+            return None
+
+        def start_work(self, number, branch, workdir="."):
+            self.cwds.append(workdir)
+
+        def commit_all(self, message, workdir="."):
+            return True
+
+        def branch_files(self, _b):
+            return ["lint.yml"]  # both builds touch the same file
+
+        def pr_files(self, n):
+            return (pr_files or {}).get(n, [])
+
+        def open_pr(self, branch, title, body):
+            self.prs.append(branch)
+
+        def comment(self, number, body):
+            self.notes.append((number, body))
+
+    return FlowForge()
+
+
+def test_parallel_builds_get_distinct_worktrees():
+    """max_parallel=2 with an empty queue: two builds run concurrently, each
+    in its own worktree — agents must never share a working tree."""
+    import devloop.core as core
+    from devloop.config import Config
+
+    forge = _full_flow_forge()
+
+    class R:
+        name = "fake"
+        def run(self, prompt, cwd, timeout):
+            return type("Res", (), {"ok": True, "output": "done"})()
+
+    out = core.run_once(Config(repo="o/r", pipeline=Pipeline(max_parallel=2)), forge, R())
+    assert sorted(o.issue for o in out) == [1, 2]
+    assert len(forge.prs) == 2
+    # two distinct private worktrees, neither the shared checkout
+    assert len(set(forge.cwds)) == 2 and "." not in forge.cwds
+
+
+def test_conflict_gate_defers_overlapping_builds():
+    """Two concurrent builds touching the same files: the later delivery is
+    deferred (no PR), not shipped as a guaranteed merge conflict. The branch
+    keeps the work; a later sweep delivers after the conflicting PR merges."""
+    import devloop.core as core
+    from devloop.config import Config
+
+    forge = _full_flow_forge(open_heads=["devloop/issue-2"], pr_files={77: ["lint.yml"]})
+    forge.pr_for_branch = lambda b: 77 if b == "devloop/issue-2" else None
+
+    class R:
+        name = "fake"
+        def run(self, prompt, cwd, timeout):
+            return type("Res", (), {"ok": True, "output": "done"})()
+
+    out = core.run_once(Config(repo="o/r", pipeline=Pipeline(max_parallel=2)), forge, R())
+    assert len(out) == 1 and out[0].issue == 1 and not out[0].delivered
+    assert not forge.prs  # nothing opened — no guaranteed conflict shipped
+    assert any(n.startswith("build deferred") for _, n in forge.notes)
+    # deferral is an attempt: the cap bounds re-run spend
+    assert core.failure_count(forge, type("I", (), {"number": 1})()) == 1
+
+
+def test_conflict_gate_passes_disjoint_builds():
+    """Same scenario, disjoint files: both PRs open — parallel where parallel
+    is actually safe."""
+    import devloop.core as core
+    from devloop.config import Config
+
+    forge = _full_flow_forge(open_heads=["devloop/issue-2"], pr_files={77: ["other.py"]})
+    forge.pr_for_branch = lambda b: 77 if b == "devloop/issue-2" else None
+    forge.branch_files = lambda b: ["lint.yml"]
+
+    class R:
+        name = "fake"
+        def run(self, prompt, cwd, timeout):
+            return type("Res", (), {"ok": True, "output": "done"})()
+
+    out = core.run_once(Config(repo="o/r", pipeline=Pipeline(max_parallel=2)), forge, R())
+    assert len(out) == 2 and len(forge.prs) == 2

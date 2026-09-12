@@ -101,6 +101,8 @@ skills_path = "skills/"  # your skills override the bundled pack
 [pipeline]
 verify = ""              # your gate, e.g. "make verify"
 review_rounds = 2
+max_parallel = 1           # raise to build concurrently; each build gets its
+                           # own worktree and file-overlap deliveries defer
 poll_seconds = 300
 ```
 
