@@ -74,6 +74,15 @@ class Forge:
         access-gates the author first."""
         raise NotImplementedError
 
+    def complete_issue(self, number: int) -> None:
+        """Close an issue whose devloop PR a human merged. NOT in
+        HUMAN_ONLY — deliberately, same precedent as close_pr: the human
+        merging the PR IS the judgment that the work is done; devloop is
+        executing that act, not judging its own work. Guarded one layer
+        down: handle_merge is the only caller, and it fires only from a
+        real forge merge event — never from agent output."""
+        raise NotImplementedError
+
     def pr_files(self, pr_number: int) -> list[str]:
         """Files touched by an open PR (for the delivery conflict gate)."""
         raise NotImplementedError

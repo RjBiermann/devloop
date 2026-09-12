@@ -200,6 +200,9 @@ class GitHub(Forge):
         _run(["gh", "pr", "close", str(pr_number), "-R", self.repo,
               "--comment", reason, "--delete-branch"])
 
+    def complete_issue(self, number: int) -> None:
+        _run(["gh", "issue", "close", str(number), "-R", self.repo])
+
     def pr_files(self, pr_number: int) -> list[str]:
         out = _run(["gh", "pr", "view", str(pr_number), "-R", self.repo,
                     "--json", "files", "--jq", "[.files[].path]"])

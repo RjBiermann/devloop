@@ -18,6 +18,13 @@ patch bumps fix behavior bugs. Tag = release.
 - Fixed build prompts using `.format()`: braces in an issue body
   (`def f(): return {'a': 1}`) crashed the build before the agent ran;
   substitution is now replace-based, like review and repair
+- Merge closeout: a human-merged devloop PR (`devloop/issue-N`) posts a
+  `devloop PR merged` ledger entry and closes its issue — no more
+  ghost issues reopened by sweeps after their PR merged. New
+  `forge.complete_issue` (carve-out documented in the base class, same
+  precedent as `/retry`'s close_pr), `devloop merged` CLI, and a
+  `pull_request: closed` trigger in the workflow template (YAML-gated to
+  merged devloop branches, so other merges cost nothing)
 
 ## v0.3.0 — repair phase
 

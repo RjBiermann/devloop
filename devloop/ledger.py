@@ -22,6 +22,10 @@ MARKERS = {
 
 RESET = "build reset by"
 
+# Completion (not a failure kind — deliberately outside MARKERS, so count()
+# never mistakes a merge for an attempt): a human merged the devloop PR.
+MERGED = "devloop PR merged"
+
 # Tail truncation lives in runtime.TAIL (one policy, shared with every
 # place agent output is rendered).
 
@@ -44,6 +48,13 @@ def reset(forge: Forge, issue: Issue | int, reason: str = "") -> None:
     body = RESET + (f" {reason}" if reason else "")
     n = issue.number if isinstance(issue, Issue) else issue
     forge.comment(n, body)
+
+
+def merged(forge: Forge, issue: Issue | int, pr_number: int) -> None:
+    """Post one completion entry: the human merged the devloop PR — the
+    issue's build lifecycle is done. On the record like every ledger entry."""
+    n = issue.number if isinstance(issue, Issue) else issue
+    forge.comment(n, f"{MERGED} #{pr_number} — closing the issue")
 
 
 def count(forge: Forge, issue: Issue) -> int:
