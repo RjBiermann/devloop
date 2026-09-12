@@ -6,3 +6,4 @@ dist/
 .devloop/lock        # per-repo state; user decides if it ships
 config.toml          # usually carries repo-specific values; commit it if you prefer
 FINDINGS.md
+.agents/
