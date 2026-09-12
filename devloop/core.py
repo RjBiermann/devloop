@@ -33,11 +33,6 @@ PROMPTS = {
               "dead/broken (probe skill), put the evidence in FINDINGS-{n}.md, then remove "
               "the component and anything only it referenced. Do not merge.\n\n"
               "## Issue #{n}: {title}\n{body}",
-    "task": "Execute the task specified in this issue body — it is the full spec. "
-            "Do exactly what it says, no more: do not expand scope, do not fix "
-            "unrelated things you notice (list them as notes in the PR body "
-            "instead). Follow repo conventions (AGENTS.md). Do not merge.\n\n"
-            "## Issue #{n}: {title}\n{body}",
 }
 
 

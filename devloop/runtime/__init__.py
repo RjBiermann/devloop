@@ -17,6 +17,11 @@ ENGINES = {
 }
 
 
+# One tail-truncation policy for every place agent/CI output is rendered
+# (PR comments, ledger tails, agent run results).
+TAIL = 4000
+
+
 class AgentRuntime:
     """Wraps one headless agent CLI: prompt in / RunResult out."""
 
@@ -29,7 +34,7 @@ class AgentRuntime:
             [*self.argv, prompt],
             cwd=cwd, capture_output=True, text=True, timeout=timeout,
         )
-        return RunResult(r.returncode == 0, (r.stdout + r.stderr)[-4000:])
+        return RunResult(r.returncode == 0, (r.stdout + r.stderr)[-TAIL:])
 
 
 def get_runtime(engine: str, argv: list[str] | None) -> AgentRuntime:

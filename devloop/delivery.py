@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from . import ledger
 from .config import Config
 from .forge import Forge, Issue
-from .runtime import AgentRuntime
+from .runtime import TAIL, AgentRuntime
 
 
 @dataclass
@@ -85,7 +85,7 @@ def deliver(cfg: Config, forge: Forge, runtime: AgentRuntime, issue: Issue,
                     f"- gate: {'PASS' if gate_ok else 'FAIL'}"
                     + (f" (`{cfg.pipeline.verify}`)" if cfg.pipeline.verify else " (none configured)")
                     + "\n\nHuman merge required — agents never merge."
-                    + "\n\n## Agent report\n\n" + agent_output[-4000:].strip()
+                    + "\n\n## Agent report\n\n" + agent_output[-TAIL:].strip()
                 ),
             )
             forge.comment(issue.number, f"Work delivered on `{branch}` — gate {'PASS' if gate_ok else 'FAIL'}.")

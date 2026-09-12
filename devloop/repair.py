@@ -14,7 +14,7 @@ from pathlib import Path
 
 from .config import Config
 from .forge import Forge
-from .runtime import AgentRuntime
+from .runtime import TAIL, AgentRuntime
 
 REPAIR_PROMPT = (
     "You are repairing a pull request based on AI review findings. The "
@@ -74,7 +74,7 @@ def repair_pr(cfg: Config, forge: Forge, runtime: AgentRuntime, pr_number: int,
             forge.pr_comment(pr_number, f"AI repair round {rnd}: fixer run failed.")
             return findings
         forge.pr_comment(pr_number, f"**AI repair, round {rnd}/{cfg.pipeline.repair_rounds}**\n\n"
-                                 + res.output.strip()[-4000:])
+                                 + res.output.strip()[-TAIL:])
         # gate before push — a repair that pushes failing code is worse
         # than no repair; the finding stays open for the human instead
         if cfg.pipeline.verify:
@@ -95,7 +95,7 @@ def repair_pr(cfg: Config, forge: Forge, runtime: AgentRuntime, pr_number: int,
                            cwd=".", timeout=cfg.pipeline.timeout)
         if vres.ok:
             forge.pr_comment(pr_number, f"**AI verify after repair {rnd}**\n\n"
-                                     + vres.output.strip()[-4000:])
+                                     + vres.output.strip()[-TAIL:])
             if _lgtm(vres.output):
                 return ""
         findings = vres.output.strip() if vres.ok else findings

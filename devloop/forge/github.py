@@ -8,6 +8,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 
 from .base import Comment, Forge, Issue
 
@@ -91,7 +92,6 @@ class GitHub(Forge):
         work is cheaper to redo than human conflict resolution)."""
         _run(["git", "fetch", "origin"])
         default = _run(["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"]).strip()
-        import tempfile
         wt = tempfile.mkdtemp(prefix="devloop-rebase-") + "/tree"
         _run(["git", "worktree", "add", "--detach", wt, branch])
         try:

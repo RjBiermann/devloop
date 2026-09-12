@@ -16,7 +16,7 @@ from pathlib import Path
 
 from .config import Config
 from .forge import Forge
-from .runtime import AgentRuntime
+from .runtime import TAIL, AgentRuntime
 
 REVIEW_PROMPT = (
     "You are reviewing a pull request authored by another AI agent. Review "
@@ -45,7 +45,7 @@ def review_prompt(cfg: Config, issue_title: str = "", issue_body: str = "") -> s
 
 
 def review_pr(cfg: Config, forge: Forge, runtime: AgentRuntime, pr_number: int,
-              branch: str = "", issue_title: str = "", issue_body: str = "") -> None:
+              branch: str = "", issue_title: str = "", issue_body: str = "") -> str:
     """AI pre-review rounds (pipeline.review_rounds) on one PR. Stops early
     on LGTM. Returns the last round's findings ("" on LGTM or failed run).
     branch = head branch when known (build flow); empty = review-by-number
@@ -83,7 +83,7 @@ def review_pr(cfg: Config, forge: Forge, runtime: AgentRuntime, pr_number: int,
             return ""
         prior.append(res.output.strip())
         forge.pr_comment(pr_number, f"**AI pre-review, round {rnd}/{cfg.pipeline.review_rounds}**\n\n"
-                                 + res.output.strip()[-4000:])
+                                 + res.output.strip()[-TAIL:])
         if "LGTM" in res.output[-200:].upper():
             return ""
     return prior[-1]

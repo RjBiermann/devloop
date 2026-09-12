@@ -10,6 +10,7 @@ issues were written by older versions, so they never change — only append.
 """
 
 from .forge import Forge, Issue
+from .runtime import TAIL
 
 MARKERS = {
     "agent": "agent run FAILED",      # the agent run itself died/timed out
@@ -21,9 +22,8 @@ MARKERS = {
 
 RESET = "build reset by"
 
-# One truncation policy for every tail the ledger renders (was 800/1200
-# split across call sites).
-_TAIL = 1200
+# Tail truncation lives in runtime.TAIL (one policy, shared with every
+# place agent output is rendered).
 
 
 def failure(forge: Forge, issue: Issue | int, kind: str, note: str = "",
@@ -34,7 +34,7 @@ def failure(forge: Forge, issue: Issue | int, kind: str, note: str = "",
     if note:
         body += f" — {note}"
     if tail:
-        body += f"\n```\n{tail[-_TAIL:]}\n```"
+        body += f"\n```\n{tail[-TAIL:]}\n```"
     n = issue.number if isinstance(issue, Issue) else issue
     forge.comment(n, body)
 
