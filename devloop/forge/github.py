@@ -75,6 +75,10 @@ class GitHub(Forge):
     def pr_diff_by_number(self, pr_number: int) -> str:
         return _run(["gh", "pr", "diff", str(pr_number), "-R", self.repo])
 
+    def pr_body(self, pr_number: int) -> str:
+        return _run(["gh", "pr", "view", str(pr_number), "-R", self.repo, "--json", "body",
+                     "--jq", ".body"]) or ""
+
     def comments(self, number: int) -> list[Comment]:
         # --paginate: long spec conversations exceed gh's default 30-per-page
         out = _run(["gh", "api", f"repos/{self.repo}/issues/{number}/comments",

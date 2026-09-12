@@ -77,6 +77,9 @@ class Forge:
         """Unified diff of a PR by number (review-by-number mode)."""
         return ""
 
+    def pr_body(self, pr_number: int) -> str:
+        return ""
+
     # --- human-only operations: blocked in the base -----------------------
     def merge(self, pr_number: int) -> None:
         self._human_only("merge")

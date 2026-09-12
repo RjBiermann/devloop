@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -179,7 +180,8 @@ def process_issue(cfg: Config, forge: Forge, runtime: AgentRuntime, issue: Issue
             )
             forge.comment(issue.number, f"Work delivered on `{branch}` — gate {'PASS' if gate_ok else 'FAIL'}.")
         pr_num = existing or forge.pr_for_branch(branch)
-        review_pr(cfg, forge, runtime, pr_num, branch)
+        review_pr(cfg, forge, runtime, pr_num, branch,
+                  issue_title=issue.title, issue_body=issue.body)
     except Exception as e:
         # Delivery-stage failure (gate, commit, PR creation): the agent did
         # its work but the pipeline could not ship it — tell the human here,
@@ -193,32 +195,42 @@ def process_issue(cfg: Config, forge: Forge, runtime: AgentRuntime, issue: Issue
 
 REVIEW_PROMPT = (
     "You are reviewing a pull request authored by another AI agent. Review "
-    "the diff below against the issue it closes: correctness, scope creep "
+    "the diff below against the spec issue below it: correctness, scope creep "
     "(changes the issue never asked for), repo-convention violations "
     "(AGENTS.md), and missing tests. Do NOT make changes.\n\n"
     "Output format: the single word `LGTM` if the PR is ready for human "
     "review, otherwise a numbered findings list — each finding as "
     "`file:line — severity (P0/P1/P2) — one-paragraph rationale`.\n\n"
+    "## The spec issue\n## {issue_title}\n{issue_body}\n\n"
     "## The diff\n```diff\n{diff}\n```"
 )
 
 
-def review_prompt(cfg: Config) -> str:
-    """Base review prompt + repo-specific guidance from skills/pre-review/
-    SKILL.md — the customization point: repos edit that file to shape what
-    the reviewer looks for, without touching devloop code."""
+def review_prompt(cfg: Config, issue_title: str = "", issue_body: str = "") -> str:
+    """Base review prompt (with the spec issue inline — the yardstick) +
+    repo-specific guidance from skills/pre-review/SKILL.md — the
+    customization point: repos edit that file to shape what the reviewer
+    looks for, without touching devloop code."""
     p = Path("skills/pre-review/SKILL.md")
-    if p.exists():
-        return REVIEW_PROMPT + "\n\n## Repo-specific review guidance\n" + p.read_text()
-    return REVIEW_PROMPT
+    prompt = REVIEW_PROMPT + "\n\n## Repo-specific review guidance\n" + p.read_text() if p.exists() else REVIEW_PROMPT
+    return prompt.format(issue_title=issue_title, issue_body=issue_body)
 
 
-def review_pr(cfg: Config, forge: Forge, runtime: AgentRuntime, pr_number: int, branch: str = "") -> None:
+def review_pr(cfg: Config, forge: Forge, runtime: AgentRuntime, pr_number: int,
+              branch: str = "", issue_title: str = "", issue_body: str = "") -> None:
     """AI pre-review rounds (pipeline.review_rounds) on one PR. Findings only
     — no auto-fix: a human reads them on the PR. Stops early on LGTM.
     branch = head branch when known (build flow); empty = review-by-number
-    (`devloop review <pr>`), diff fetched from the forge."""
-    prompt = review_prompt(cfg)
+    (`devloop review <pr>`), diff fetched from the forge.
+    issue_title/issue_body: the spec the diff is judged against (the builder
+    flow has it; review-by-number parses `Closes #N` from the PR body)."""
+    if not issue_title:
+        body = forge.pr_body(pr_number)
+        m = re.search(r"[Cc]loses #(\d+)", body)
+        if m:
+            it = forge.issue(int(m.group(1)))
+            issue_title, issue_body = it.title, it.body
+    prompt = review_prompt(cfg, issue_title, issue_body)
     for rnd in range(1, cfg.pipeline.review_rounds + 1):
         diff = forge.pr_diff(branch) if branch else forge.pr_diff_by_number(pr_number)
         res = runtime.run(prompt.format(diff=diff[:40000]),
