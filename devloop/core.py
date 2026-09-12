@@ -235,7 +235,9 @@ def review_pr(cfg: Config, forge: Forge, runtime: AgentRuntime, pr_number: int,
             issue_title, issue_body = it.title, it.body
     prompt = review_prompt(cfg, issue_title, issue_body)
     for rnd in range(1, cfg.pipeline.review_rounds + 1):
-        diff = forge.pr_diff(branch) if branch else forge.pr_diff_by_number(pr_number)
+        # diff straight from the forge — GitHub computes it authoritatively;
+        # local origin/HEAD-based diffs proved unreliable mid-build
+        diff = forge.pr_diff_by_number(pr_number)
         res = runtime.run(prompt.replace("{diff}", diff[:40000]),
                           cwd=".", timeout=cfg.pipeline.timeout)
         res = runtime.run(prompt.format(diff=diff[:40000]),
