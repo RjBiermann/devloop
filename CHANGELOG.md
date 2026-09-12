@@ -25,6 +25,12 @@ patch bumps fix behavior bugs. Tag = release.
   precedent as `/retry`'s close_pr), `devloop merged` CLI, and a
   `pull_request: closed` trigger in the workflow template (YAML-gated to
   merged devloop branches, so other merges cost nothing)
+- Push trigger on the default branch in the workflow template: main
+  moving runs the sweep immediately (rebase stale PRs, rebuild on
+  conflict) instead of waiting up to 30 min for the schedule. No new
+  code — `run_once` already owned the upkeep; redundant runs from a
+  release-bot's follow-up push are accepted (an idle sweep is a few
+  `gh` list calls, serialized by the concurrency group)
 
 ## v0.3.0 — repair phase
 
