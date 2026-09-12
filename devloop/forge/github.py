@@ -98,7 +98,10 @@ class GitHub(Forge):
         _run(["git", "fetch", "origin"])
         default = _run(["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"]).strip()
         wt = tempfile.mkdtemp(prefix="devloop-rebase-") + "/tree"
-        _run(["git", "worktree", "add", "--detach", wt, branch])
+        # rebase the remote ref, not the bare name: a CI checkout has no local
+        # branch for a PR opened by a previous run (fetch created origin/<branch>,
+        # not <branch>) — 'invalid reference' otherwise
+        _run(["git", "worktree", "add", "--detach", wt, f"origin/{branch}"])
         try:
             r = subprocess.run(["git", "rebase", default], cwd=wt,
                                capture_output=True, text=True)

@@ -734,6 +734,97 @@ def test_rebase_stage_rebases_clean_and_rebuilds_conflicts():
     assert ledger.count(f2, type("I", (), {"number": 9})()) == 1
 
 
+def test_rebase_branch_infra_error_skips_head():
+    """rebase_stale: a git *failure* in rebase_branch (transient network,
+    missing ref — anything that raises) must NOT close the PR or burn an
+    attempt; that path is for real conflicts only. The head is skipped
+    loudly and the sweep moves on."""
+    import devloop.core as core
+
+    class BoomForge(FlowForge):
+        def __init__(self):
+            self.closed = []
+
+        def rebase_branch(self, branch):
+            raise RuntimeError("git failed: fatal: invalid reference: " + branch)
+
+        def pr_for_branch(self, b):
+            return 77
+
+        def close_pr(self, n, reason):
+            self.closed.append(n)
+
+    f = BoomForge()
+    core.rebase_stale(Config(repo="o/r"), f, ["devloop/issue-9"])
+    assert f.closed == [] and f.notes == []  # nothing destroyed, nothing counted
+
+
+def test_rebase_branch_real_git_resolves_remote_pr_head():
+    """The shipped bug: rebase_branch ran in a fresh CI checkout where the
+    PR branch exists only as origin/<branch> (fetch created no local ref).
+    Real git, real remote — asserts the origin/<branch> resolution and the
+    force-push land."""
+    import os
+    import subprocess
+    import tempfile
+    from devloop.forge.github import GitHub
+
+    def g(*args, cwd):
+        subprocess.run(["git", *args], cwd=cwd, check=True,
+                       capture_output=True)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        # bare remote with main + a devloop branch one commit ahead
+        remote = tmp + "/remote.git"
+        subprocess.run(["git", "init", "--bare", "-b", "main", remote], check=True,
+                       capture_output=True)
+        seed = tmp + "/seed"
+        g("clone", remote, "seed", cwd=tmp)
+        g("config", "user.email", "t@t", cwd=seed)
+        g("config", "user.name", "t", cwd=seed)
+        with open(seed + "/f.txt", "w") as fh:
+            fh.write("one\n")
+        g("add", "-A", cwd=seed)
+        g("commit", "-m", "one", cwd=seed)
+        g("push", "origin", "main", cwd=seed)
+        g("branch", "devloop/issue-9", cwd=seed)
+        g("push", "origin", "devloop/issue-9", cwd=seed)
+
+        # fresh CI-style checkout of main only — no local devloop ref
+        co = tmp + "/co"
+        g("clone", "--single-branch", "--branch", "main", remote, "co", cwd=tmp)
+        g("config", "user.email", "t@t", cwd=co)
+        g("config", "user.name", "t", cwd=co)
+        g("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main", cwd=co)
+
+        # main moved forward after the PR branched
+        g("checkout", "main", cwd=co)
+        with open(co + "/base.txt", "w") as fh:
+            fh.write("base\n")
+        g("add", "-A", cwd=co)
+        g("commit", "-m", "base", cwd=co)
+        g("push", "origin", "main", cwd=co)
+
+        forge = GitHub("o/r")  # repo arg unused by rebase_branch; git ops run in cwd
+        old = os.getcwd()
+        os.chdir(co)  # _run defaults to "." — the checkout IS the cwd
+        try:
+            assert forge.rebase_branch("devloop/issue-9") is True
+        finally:
+            os.chdir(old)
+
+        # remote branch was force-pushed and now sits on current main
+        g("fetch", "origin", cwd=seed)
+        tip = subprocess.run(
+            ["git", "log", "--format=%s", "origin/main..origin/devloop/issue-9"],
+            cwd=seed, capture_output=True, text=True).stdout
+        assert "one" in tip  # PR commit survived the rebase
+        ancestor = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", "origin/main", "origin/devloop/issue-9"],
+            cwd=seed, capture_output=True)
+        assert ancestor.returncode == 0  # rebased onto current main
+
+
 def test_version_bump():
     from devloop.version import next_version
     assert next_version("v0.3.0") == "v0.3.1"

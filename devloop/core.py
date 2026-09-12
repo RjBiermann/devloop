@@ -97,7 +97,16 @@ def rebase_stale(cfg: Config, forge: Forge, devloop_heads: list[str]) -> None:
             n = int(head.rsplit("-", 1)[-1])
         except ValueError:
             continue
-        if forge.rebase_branch(head):
+        try:
+            clean = forge.rebase_branch(head)
+        except Exception as e:
+            # infrastructure failure (transient network, git hiccup) — not a
+            # conflict: never a reason to close a PR and destroy delivered
+            # work. Skip the head loudly; the next sweep retries it.
+            print(f"rebase of {head} failed ({type(e).__name__}: {str(e)[:300]}) — "
+                  "skipping this sweep", file=sys.stderr)
+            continue
+        if clean:
             continue  # clean — no-op or silently updated, nothing to announce
         pr = forge.pr_for_branch(head)
         if pr:

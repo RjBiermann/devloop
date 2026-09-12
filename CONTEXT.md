@@ -55,6 +55,16 @@ close_pr: the human's merge IS the judgment that the work is done; devloop is
 executing that act, not judging its own work. The completion marker is a
 ledger record, never an attempt (see Ledger).
 
+### Rebuild
+
+A pipeline-initiated redo of a build whose branch can no longer land: a
+rebase conflict with the default branch closes the PR and the issue
+re-enters the queue on fresh main. Counts as an attempt against
+`max_attempts` (see Ledger) — unlike **Retry** (the human's `/retry`, which
+resets the budget), and unlike `ready-for-human` (the agent gave up; here
+the pipeline decided the work is cheaper to redo than to resolve by hand).
+Never triggered by agent output — only the sweep's rebase stage (see Sweep).
+
 ### Review
 
 Finding what's wrong before a human merges. The **review module**
