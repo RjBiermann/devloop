@@ -1,5 +1,11 @@
-"""Configuration loading and validation. Stdlib only."""
+"""Configuration loading and validation. Stdlib only.
 
+Layered settings (pi's global/project model): ~/.config/devloop/config.toml
+holds org-standard defaults; the repo config.toml overrides per key. Deep
+merge, repo wins.
+"""
+
+import os
 import tomllib
 import warnings
 from dataclasses import dataclass, field
@@ -34,6 +40,7 @@ class Pipeline:
     poll_seconds: int = 300
     timeout: int = 1800
     max_attempts: int = 3  # failures allowed per issue before it needs a human re-label
+    max_per_day: int = 0   # per-issue daily attempt cap; 0 = unlimited (runaway detection)
     max_parallel: int = 1  # concurrent builds; 1 = serial, zero conflicts by construction
 
 
@@ -50,6 +57,7 @@ class Access:
 class Config:
     forge_kind: str = "github"
     repo: str = ""
+    base_url: str = ""  # GitHub Enterprise Server host; "" = github.com
     labels: Labels = field(default_factory=Labels)
     runtime: Runtime = field(default_factory=Runtime)
     pipeline: Pipeline = field(default_factory=Pipeline)
@@ -72,11 +80,30 @@ class Config:
         return "remove"
 
 
-def load(path: str | Path = "config.toml") -> Config:
+def _global_path() -> Path:
+    xdg = os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config"
+    return Path(xdg) / "devloop" / "config.toml"
+
+
+def _deep_merge(base: dict, override: dict) -> dict:
+    """Repo config wins key-by-key; sections merge rather than replace."""
+    out = dict(base)
+    for k, v in override.items():
+        if isinstance(v, dict) and isinstance(base.get(k), dict):
+            out[k] = _deep_merge(base[k], v)
+        else:
+            out[k] = v
+    return out
+
+
+def load(path: str | Path = "config.toml", global_path: str | Path | None = None) -> Config:
     p = Path(path)
     if not p.exists():
         raise ConfigError(f"config not found: {p} — run `devloop init`")
     raw = tomllib.loads(p.read_text())
+    g = Path(global_path) if global_path else _global_path()
+    if g.exists():
+        raw = _deep_merge(tomllib.loads(g.read_text()), raw)
     version = raw.get("version", 1)
     if version != 1:
         raise ConfigError(
@@ -85,6 +112,7 @@ def load(path: str | Path = "config.toml") -> Config:
     cfg = Config(
         forge_kind=raw.get("forge", {}).get("kind", "github"),
         repo=raw.get("forge", {}).get("repo", ""),
+        base_url=raw.get("forge", {}).get("base_url", ""),
     )
     _apply(cfg.labels, raw.get("labels", {}), "labels")
     _apply(cfg.runtime, raw.get("runtime", {}), "runtime")

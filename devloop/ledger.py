@@ -9,6 +9,8 @@ Marker strings are load-bearing for history: comments already on live
 issues were written by older versions, so they never change — only append.
 """
 
+from datetime import date
+
 from .forge import Forge, Issue
 from .runtime import TAIL
 
@@ -22,6 +24,11 @@ MARKERS = {
 
 RESET = "build reset by"
 
+# Daily budget marker: ledger.failure stamps the date on every failure
+# comment, so a per-issue daily cap can be counted from the same comment
+# history (no extra state, same no-extra-state principle as count()).
+DAY = "devloop budget:"  # prefix line: "devloop budget: YYYY-MM-DD"
+
 # Completion (not a failure kind — deliberately outside MARKERS, so count()
 # never mistakes a merge for an attempt): a human merged the devloop PR.
 MERGED = "devloop PR merged"
@@ -34,7 +41,7 @@ def failure(forge: Forge, issue: Issue | int, kind: str, note: str = "",
             tail: str = "") -> None:
     """Post one canonical failure comment. `note` is the plain-language
     middle; `tail` is fenced output, truncated here (one policy)."""
-    body = MARKERS[kind]
+    body = f"{DAY} {date.today().isoformat()}\n\n" + MARKERS[kind]
     if note:
         body += f" — {note}"
     if tail:
@@ -68,6 +75,20 @@ def count(forge: Forge, issue: Issue) -> int:
     for c in forge.comments(issue.number):
         if c.body.startswith(RESET):
             count = 0
-        elif any(c.body.startswith(m) for m in MARKERS.values()):
+        elif any(m in c.body for m in MARKERS.values()):
             count += 1
     return count
+
+
+def count_today(forge: Forge, issue: Issue) -> int:
+    """Failed attempts today (server-local dates as posted by failure()).
+    The daily cap bounds runaway spend per issue per day; like count(),
+    it reads the comment history — no extra state."""
+    today = date.today().isoformat()
+    n = 0
+    for c in forge.comments(issue.number):
+        if c.body.startswith(f"{DAY} {today}\n") and any(
+            m in c.body for m in MARKERS.values()
+        ):
+            n += 1
+    return n

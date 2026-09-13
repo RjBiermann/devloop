@@ -202,6 +202,11 @@ def run_once(cfg: Config, forge: Forge, runtime: AgentRuntime) -> list[Outcome]:
             print(f"#{issue.number}: {ledger.count(forge, issue)} failed attempts — "
                   "skipped; re-label to retry", file=sys.stderr)
             continue
+        if cfg.pipeline.max_per_day and \
+                ledger.count_today(forge, issue) >= cfg.pipeline.max_per_day:
+            print(f"#{issue.number}: daily cap reached ({cfg.pipeline.max_per_day}) — "
+                  "skipped until tomorrow", file=sys.stderr)
+            continue
         candidates.append(issue)
         if len(candidates) >= slots:
             break

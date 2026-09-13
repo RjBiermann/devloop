@@ -14,15 +14,23 @@ from .base import Comment, Forge, Issue
 
 
 def _run(args: list[str], cwd: str = ".") -> str:
-    r = subprocess.run(args, cwd=cwd, capture_output=True, text=True)
+    env = dict(os.environ)
+    if host := env.get("_DEVLOOP_GH_HOST", ""):
+        env["GH_HOST"] = host  # GHES base host; gh also honors a real GH_HOST
+    r = subprocess.run(args, cwd=cwd, capture_output=True, text=True, env=env)
     if r.returncode != 0:
         raise RuntimeError(f"{args[0]} failed: {r.stderr.strip()[:500]}")
     return r.stdout
 
 
 class GitHub(Forge):
-    def __init__(self, repo: str) -> None:
+    def __init__(self, repo: str, base_url: str = "") -> None:
         self.repo = repo
+        # GHES: [forge].base_url = "ghe.example.com" — carried to every gh
+        # call via GH_HOST (the gh-native mechanism; auth via `gh auth login
+        # --hostname`). git remote operations are untouched: the checkout's
+        # remote already points at the right host.
+        self._gh_host = base_url.removeprefix("https://").removeprefix("http://").rstrip("/")
         # checkout registry: issue number → worktree path. start_work and
         # finish_work are the only code that creates or deletes these, so
         # the adapter can never rmtree a path it did not create itself

@@ -5,6 +5,8 @@ version = 1              # config schema version — bumping = migration, old fi
 [forge]
 kind = "github"            # github | gitlab | gitea (adapters ship over time)
 repo = "owner/name"        # where issues and PRs live
+base_url = ""              # GitHub Enterprise Server host, e.g. "ghe.example.com"
+                           # (empty = github.com; auth via `gh auth login --hostname`)
 
 [labels]
 # Rename freely — your vocabulary, your users.
@@ -27,6 +29,10 @@ max_parallel = 1           # concurrent builds. Each build gets its own git
                            # an open devloop PR are deferred to a later sweep,
                            # so raising this is safe — it changes throughput,
                            # not correctness (and not AI spend per issue)
+max_attempts = 3           # failed attempts per issue before a human must
+                           # re-label (or `/retry` to reset the budget)
+max_per_day = 0            # per-issue daily attempt cap; 0 = unlimited. Bounds
+                           # runaway spend (a poison task burning tokens all day)
 poll_seconds = 300         # watch-mode poll interval
 timeout = 1800             # per-agent-run timeout, seconds
 
