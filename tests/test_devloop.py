@@ -948,8 +948,12 @@ def test_version_bump():
         raise AssertionError("missing v prefix should fail loudly")
     except SystemExit:
         pass
-    from devloop.version import set_version
-    set_version("0.3.0")  # no-change rewrite must not fail
+    import tempfile
+    import devloop.version as vmod
+    vmod._PYPROJECT = Path(tempfile.mkdtemp()) / "pyproject.toml"  # never touch the real file
+    vmod._PYPROJECT.write_text('name = "devloop"\nversion = "0.3.0"\n')
+    vmod.set_version("0.3.0")  # no-change rewrite must not fail
+    assert 'version = "0.3.0"' in vmod._PYPROJECT.read_text()
 
 
 if __name__ == "__main__":
