@@ -76,6 +76,28 @@ so a config rename can never orphan the trigger. Not to be confused with
 `ready-for-agent` (a triage label: specified and queued, but no build
 until a trigger label lands).
 
+### Workflow template
+
+The copy-ready GitHub Actions file an adopter starts from: `deploy/github-actions.yml`,
+kept generic on purpose — it never hardcodes a label name (filters on the
+reserved `ai-` prefix), the install source, the agent CLI, or the model
+list; those are per-repo (see docs/environments.md). Naming the file
+`devloop.yml` and editing the marked placeholders is the adopter's whole
+setup. Not a devloop artifact at runtime — the pipeline never reads it;
+broken template syntax breaks the adopter's workflow parser before
+devloop runs (see ADR-0003 for why the filter stays prefix-based).
+
+### Adopter
+
+A repo running devloop against its own forge: copies the workflow template
+into `.github/workflows/`, sets `[forge].repo` and the label vocabulary in
+`config.toml`, and provides the agent runtime. Everything else — tool,
+config schema, skills, behavior — is identical to the devloop checkout;
+only authentication and scheduling differ (see docs/environments.md). The
+adopter's humans keep the guardrails: labels, merges, closes. devloop
+versions are not adopter versions — the adopter pins a devloop tag
+(Pinning) and upgrades deliberately.
+
 ### Review
 
 Finding what's wrong before a human merges. The **review module**
