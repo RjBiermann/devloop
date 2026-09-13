@@ -1032,3 +1032,65 @@ def test_merged_pr_completes_issue():
 
     from devloop import ledger
     assert ledger.count(LF(), 9) == 1  # merge ≠ an attempt; the failure is
+
+
+def test_git_identity_guard():
+    """Fresh CI checkouts have no git identity — start_work sets one so
+    agent self-commits and pipeline commits never fail or guess. A human's
+    explicit config (local or global) always wins."""
+    import os
+    import subprocess
+    import tempfile
+    from devloop.forge.github import GitHub
+
+    def g(*args, cwd):
+        subprocess.run(["git", *args], cwd=cwd, check=True,
+                       capture_output=True)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        remote = tmp + "/remote.git"
+        subprocess.run(["git", "init", "--bare", "-b", "main", remote],
+                       check=True, capture_output=True)
+        seed = tmp + "/seed"
+        g("clone", remote, "seed", cwd=tmp)
+        g("config", "user.email", "t@t", cwd=seed)
+        g("config", "user.name", "t", cwd=seed)
+        with open(seed + "/f.txt", "w") as fh:
+            fh.write("one\n")
+        g("add", "-A", cwd=seed)
+        g("commit", "-m", "one", cwd=seed)
+        g("push", "origin", "main", cwd=seed)
+
+        # fresh CI-style checkout: no identity anywhere
+        co = tmp + "/co"
+        g("clone", remote, "co", cwd=tmp)
+        g("symbolic-ref", "refs/remotes/origin/HEAD",
+          "refs/remotes/origin/main", cwd=co)
+
+        forge = GitHub("o/r")
+        old = os.getcwd()
+        os.chdir(co)
+        try:
+            workdir = forge.start_work(9, "devloop/issue-9")
+            name = subprocess.run(["git", "config", "user.name"], cwd=workdir,
+                                  capture_output=True, text=True).stdout.strip()
+            email = subprocess.run(["git", "config", "user.email"], cwd=co,
+                                   capture_output=True, text=True).stdout.strip()
+        finally:
+            os.chdir(old)
+        assert name == "devloop agent" and \
+            email == "devloop@users.noreply.github.com"
+
+        # human-set identity is never overridden
+        g("config", "user.email", "human@repo", cwd=co)
+        g("config", "user.name", "human", cwd=co)
+        old = os.getcwd()
+        os.chdir(co)
+        try:
+            from devloop.forge.github import _ensure_identity
+            _ensure_identity(co)
+        finally:
+            os.chdir(old)
+        assert subprocess.run(["git", "config", "user.email"], cwd=co,
+                              capture_output=True, text=True).stdout.strip() \
+            == "human@repo"

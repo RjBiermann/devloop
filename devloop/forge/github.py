@@ -13,6 +13,20 @@ import tempfile
 from .base import Comment, Forge, Issue
 
 
+def _ensure_identity(cwd: str) -> None:
+    """Fresh CI checkouts have no git identity — agents must not guess one.
+    Set the devloop identity only when unset: a human's explicit config
+    (local or global) always wins. Needed at every fresh worktree: build
+    worktrees for agent/pipeline commits, detached worktrees for rebase
+    (rebase re-commits, so it needs committer identity too)."""
+    r = subprocess.run(["git", "config", "--get", "user.email"], cwd=cwd,
+                       capture_output=True)
+    if r.returncode != 0:
+        _run(["git", "config", "user.name", "devloop agent"], cwd=cwd)
+        _run(["git", "config", "user.email",
+              "devloop@users.noreply.github.com"], cwd=cwd)
+
+
 def _run(args: list[str], cwd: str = ".", gh_host: str = "") -> str:
     # GHES: gh picks the host from GH_HOST (auth via `gh auth login
     # --hostname`); git calls pass gh_host="" — env untouched.
@@ -110,6 +124,7 @@ class GitHub(Forge):
         # branch for a PR opened by a previous run (fetch created origin/<branch>,
         # not <branch>) — 'invalid reference' otherwise
         _run(["git", "worktree", "add", "--detach", wt, f"origin/{branch}"])
+        _ensure_identity(wt)
         try:
             r = subprocess.run(["git", "rebase", default], cwd=wt,
                                capture_output=True, text=True)
@@ -159,6 +174,7 @@ class GitHub(Forge):
         workdir = parent + "/tree"
         default = _run(["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"]).strip()
         _run(["git", "worktree", "add", "-B", branch, workdir, default])
+        _ensure_identity(workdir)
         self._checkouts[number] = workdir
         # force when the remote branch already exists (a deferred or abandoned
         # build): this branch is devloop-owned, the worktree is fresh from main

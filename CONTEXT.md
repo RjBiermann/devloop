@@ -65,6 +65,17 @@ resets the budget), and unlike `ready-for-human` (the agent gave up; here
 the pipeline decided the work is cheaper to redo than to resolve by hand).
 Never triggered by agent output — only the sweep's rebase stage (see Sweep).
 
+### Trigger label
+
+A human-applied issue label that starts a build: `ai-fix`, `ai-build`,
+`ai-remove` — or any repo rename **within the reserved `ai-` prefix**
+(ADR-0003). Mutually exclusive — two on one issue is a config error — and
+agents never apply them (see AGENTS.md). Renames live in config
+(`[labels]`); the prefix is the contract the workflow template filters on,
+so a config rename can never orphan the trigger. Not to be confused with
+`ready-for-agent` (a triage label: specified and queued, but no build
+until a trigger label lands).
+
 ### Review
 
 Finding what's wrong before a human merges. The **review module**

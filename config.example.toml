@@ -10,6 +10,8 @@ base_url = ""              # GitHub Enterprise Server host, e.g. "ghe.example.co
 
 [labels]
 # Rename freely — your vocabulary, your users.
+# The ai- prefix is reserved (ADR-0003): renames stay inside it, the
+# workflow template filters on the prefix, never on names.
 fix = "ai-fix"             # broken thing, agent repairs it
 new = "ai-build"        # new unit of work, agent builds it
 remove = "ai-remove"  # delete something, with evidence first
