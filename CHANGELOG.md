@@ -3,7 +3,40 @@
 All notable changes to devloop. Semver-ish: minor bumps add features,
 patch bumps fix behavior bugs. Tag = release.
 
-## Unreleased — M1 hardening
+## Unreleased
+
+(nothing yet — releases are automatic (ADR-0002); notes land here when a
+merge ships)
+
+## v0.3.8 — template + docs hardening
+
+- **Template passes actionlint**: comments moved out of the folded `if:`
+  expression — the shipped template failed GitHub's workflow parser for
+  every adopter copying it verbatim.
+- **PAT delivery pattern**: GITHUB_TOKEN cannot push commits that modify
+  `.github/workflows/`, regardless of permissions — the run's work is
+  silently discarded at delivery. docs/environments.md → Auth documents
+  the extraheader PAT pattern (fine-grained PAT, Contents + Workflows
+  read/write).
+- **Pinning**: the template install line recommends pinning to a tag;
+  a Pinning section explains why (an unpinned devloop means a broken
+  devloop commit breaks every adopting pipeline at once).
+- **Glossary**: Workflow template and Adopter defined in CONTEXT.md.
+- **Test fix**: `test_version_bump` rewrote the repo's real
+  pyproject.toml — a no-op when written at 0.3.0, a silent version
+  downgrade on every test run afterwards. Isolated to a temp file.
+
+## v0.3.7 — forge owns its identity
+
+- **Git identity**: on fresh CI checkouts, devloop sets the commit
+  identity itself (start_work / rebase_branch) — only when unset; a
+  human's config always wins.
+- **Trigger-label contract**: the reserved `ai-` prefix is the workflow
+  filter contract (ADR-0003) — a config rename within the namespace
+  never orphans the trigger, and the workflow never hardcodes label
+  names.
+
+## v0.3.6 — M1 hardening
 
 - **Layered settings**: `~/.config/devloop/config.toml` (or
   `$XDG_CONFIG_HOME`) holds org-standard defaults; the repo `config.toml`
@@ -17,6 +50,8 @@ patch bumps fix behavior bugs. Tag = release.
 - **GitHub Enterprise Server**: `[forge].base_url = "ghe.example.com"`
   reaches every `gh` call as `GH_HOST`; auth via `gh auth login
   --hostname`. Git remote ops untouched.
+- **Refactor + docs sync**: ponytail-review fixes across the core;
+  stale `ai-task` workflow gate removed.
 
 ## v0.3.5 — forge fixes
 
