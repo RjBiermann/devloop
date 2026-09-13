@@ -13,11 +13,11 @@ import tempfile
 from .base import Comment, Forge, Issue
 
 
-def _run(args: list[str], cwd: str = ".") -> str:
-    env = dict(os.environ)
-    if host := env.get("_DEVLOOP_GH_HOST", ""):
-        env["GH_HOST"] = host  # GHES base host; gh also honors a real GH_HOST
-    r = subprocess.run(args, cwd=cwd, capture_output=True, text=True, env=env)
+def _run(args: list[str], cwd: str = ".", gh_host: str = "") -> str:
+    # GHES: gh picks the host from GH_HOST (auth via `gh auth login
+    # --hostname`); git calls pass gh_host="" — env untouched.
+    r = subprocess.run(args, cwd=cwd, capture_output=True, text=True,
+                       env={"GH_HOST": gh_host} if gh_host else None)
     if r.returncode != 0:
         raise RuntimeError(f"{args[0]} failed: {r.stderr.strip()[:500]}")
     return r.stdout
@@ -44,7 +44,7 @@ class GitHub(Forge):
                 "gh", "issue", "list", "-R", self.repo,
                 "--label", label, "--state", "open",
                 "--json", "number,title,body,labels",
-            ])
+            ], gh_host=self._gh_host)
             for it in json.loads(out or "[]"):
                 names = [l["name"] for l in it.get("labels", [])]
                 issues.append(Issue(it["number"], it["title"], it.get("body") or "", names))
@@ -57,42 +57,42 @@ class GitHub(Forge):
 
     def issue(self, number: int) -> Issue:
         out = _run(["gh", "issue", "view", str(number), "-R", self.repo,
-                    "--json", "number,title,body,labels"])
+                    "--json", "number,title,body,labels"], gh_host=self._gh_host)
         it = json.loads(out or "{}")
         names = [l["name"] for l in it.get("labels", [])]
         return Issue(it["number"], it["title"], it.get("body") or "", names)
 
     def create_issue(self, title: str, body: str) -> int:
         out = _run(["gh", "issue", "create", "-R", self.repo,
-                    "--title", title, "--body", body])
+                    "--title", title, "--body", body], gh_host=self._gh_host)
         return int(out.strip().rstrip("/").rsplit("/", 1)[-1])
 
     def edit_issue_body(self, number: int, body: str) -> None:
-        _run(["gh", "issue", "edit", str(number), "-R", self.repo, "--body", body])
+        _run(["gh", "issue", "edit", str(number), "-R", self.repo, "--body", body], gh_host=self._gh_host)
 
     def comment(self, number: int, body: str) -> None:
-        _run(["gh", "issue", "comment", str(number), "-R", self.repo, "--body", body])
+        _run(["gh", "issue", "comment", str(number), "-R", self.repo, "--body", body], gh_host=self._gh_host)
 
     def pr_comment(self, pr_number: int, body: str) -> None:
-        _run(["gh", "pr", "comment", str(pr_number), "-R", self.repo, "--body", body])
+        _run(["gh", "pr", "comment", str(pr_number), "-R", self.repo, "--body", body], gh_host=self._gh_host)
 
     def pr_for_branch(self, branch: str) -> int | None:
         out = _run(["gh", "pr", "list", "-R", self.repo, "--head", branch,
-                    "--state", "open", "--json", "number", "--jq", "[.[].number]"])
+                    "--state", "open", "--json", "number", "--jq", "[.[].number]"], gh_host=self._gh_host)
         nums = json.loads(out or "[]")
         return int(nums[0]) if nums else None
 
     def pr_diff_by_number(self, pr_number: int) -> str:
-        return _run(["gh", "pr", "diff", str(pr_number), "-R", self.repo])
+        return _run(["gh", "pr", "diff", str(pr_number), "-R", self.repo], gh_host=self._gh_host)
 
     def pr_body(self, pr_number: int) -> str:
         return _run(["gh", "pr", "view", str(pr_number), "-R", self.repo, "--json", "body",
-                     "--jq", ".body"]) or ""
+                     "--jq", ".body"], gh_host=self._gh_host) or ""
 
     def comments(self, number: int) -> list[Comment]:
         # --paginate: long spec conversations exceed gh's default 30-per-page
         out = _run(["gh", "api", f"repos/{self.repo}/issues/{number}/comments",
-                    "--paginate", "--jq", "[.[] | {author: .user.login, body: .body}]"])
+                    "--paginate", "--jq", "[.[] | {author: .user.login, body: .body}]"], gh_host=self._gh_host)
         return [Comment(it["author"], it["body"]) for it in json.loads(out or "[]")]
 
     def pr_comments(self, pr_number: int) -> list[Comment]:
@@ -130,13 +130,13 @@ class GitHub(Forge):
 
     def open_pr_head_branches(self) -> list[str]:
         out = _run(["gh", "pr", "list", "-R", self.repo, "--state", "open",
-                    "--json", "headRefName", "--jq", "[.[].headRefName]"])
+                    "--json", "headRefName", "--jq", "[.[].headRefName]"], gh_host=self._gh_host)
         return json.loads(out or "[]")
 
     # --- trigger authority (GitHub roles via collaborator permission API) ---
     def _permission(self, author: str) -> str:
         return _run(["gh", "api", f"repos/{self.repo}/collaborators/{author}/permission",
-                     "--jq", ".permission"]).strip()
+                     "--jq", ".permission"], gh_host=self._gh_host).strip()
 
     def is_owner(self, author: str) -> bool:
         return self._permission(author) == "admin"
@@ -205,18 +205,18 @@ class GitHub(Forge):
         return True
 
     def open_pr(self, branch: str, title: str, body: str) -> None:
-        _run(["gh", "pr", "create", "--head", branch, "--title", title, "--body", body])
+        _run(["gh", "pr", "create", "--head", branch, "--title", title, "--body", body], gh_host=self._gh_host)
 
     def close_pr(self, pr_number: int, reason: str) -> None:
         _run(["gh", "pr", "close", str(pr_number), "-R", self.repo,
-              "--comment", reason, "--delete-branch"])
+              "--comment", reason, "--delete-branch"], gh_host=self._gh_host)
 
     def complete_issue(self, number: int) -> None:
-        _run(["gh", "issue", "close", str(number), "-R", self.repo])
+        _run(["gh", "issue", "close", str(number), "-R", self.repo], gh_host=self._gh_host)
 
     def pr_files(self, pr_number: int) -> list[str]:
         out = _run(["gh", "pr", "view", str(pr_number), "-R", self.repo,
-                    "--json", "files", "--jq", "[.files[].path]"])
+                    "--json", "files", "--jq", "[.files[].path]"], gh_host=self._gh_host)
         return json.loads(out or "[]")
 
     def branch_files(self, branch: str) -> list[str]:

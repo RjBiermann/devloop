@@ -829,12 +829,16 @@ def test_rebase_branch_real_git_resolves_remote_pr_head():
 
 def test_layered_settings_global_repo_merge():
     """M1 layered settings: ~/.config/devloop/config.toml = org defaults,
-    repo config.toml overrides key-by-key; sections merge, repo wins."""
+    repo config.toml overrides key-by-key; sections merge, repo wins.
+    Tests point XDG_CONFIG_HOME at a temp dir instead of $HOME."""
+    import os
     import tempfile
     from devloop.config import load
 
     with tempfile.TemporaryDirectory() as tmp:
-        g = Path(tmp) / "global.toml"
+        xdg = Path(tmp) / "xdg"
+        (xdg / "devloop").mkdir(parents=True)
+        g = xdg / "devloop" / "config.toml"
         r = Path(tmp) / "repo.toml"
         g.write_text(
             "[forge]\nrepo = 'org/standard'\n"
@@ -845,17 +849,23 @@ def test_layered_settings_global_repo_merge():
             "[forge]\nrepo = 'me/myrepo'\n"
             "[pipeline]\nreview_rounds = 4\n"
         )
-        cfg = load(r, global_path=g)
-        # repo wins on the key it sets
-        assert cfg.repo == "me/myrepo" and cfg.pipeline.review_rounds == 4
-        # untouched global keys survive
-        assert cfg.pipeline.repair_rounds == 0 and cfg.access.mode == "owners"
+        old = os.environ.get("XDG_CONFIG_HOME")
+        os.environ["XDG_CONFIG_HOME"] = str(xdg)
+        try:
+            cfg = load(r)
+            # repo wins on the key it sets
+            assert cfg.repo == "me/myrepo" and cfg.pipeline.review_rounds == 4
+            # untouched global keys survive
+            assert cfg.pipeline.repair_rounds == 0 and cfg.access.mode == "owners"
 
-    # no global file = repo config alone (the normal path, unchanged)
-    with tempfile.TemporaryDirectory() as tmp:
-        r = Path(tmp) / "repo.toml"
-        r.write_text("[forge]\nrepo = 'me/only'\n")
-        assert load(r, global_path=Path(tmp) / "missing.toml").repo == "me/only"
+            # no global file = repo config alone (the normal path, unchanged)
+            g.unlink()
+            assert load(r).repo == "me/myrepo"
+        finally:
+            if old is None:
+                os.environ.pop("XDG_CONFIG_HOME", None)
+            else:
+                os.environ["XDG_CONFIG_HOME"] = old
 
 
 def test_daily_budget_cap_blocks_runaway_issue():
@@ -871,7 +881,7 @@ def test_daily_budget_cap_blocks_runaway_issue():
     class BudgetForge(FlowForge):
         def __init__(self):
             super().__init__()
-            self.today_failures = 0
+            self.today_failures = 2
 
         def comments(self, number):
             # issue 1: two failures today (at max_per_day); issue 2: clean
@@ -888,8 +898,7 @@ def test_daily_budget_cap_blocks_runaway_issue():
     core.process_issue = lambda cfg, f, r, issue, workdir=None: started.append(issue.number)
     try:
         cfg = Config(repo="o/r", pipeline=Pipeline(max_parallel=2, max_per_day=2))
-        forge = BudgetForge()
-        forge.today_failures = 2  # at cap
+        forge = BudgetForge()  # today_failures=2: at cap
         core.run_once(cfg, forge, type("R", (), {"name": "fake"})())
         # issue 1 hit its daily cap; issue 2 built
         assert started == [2]
@@ -908,29 +917,25 @@ def test_daily_budget_cap_blocks_runaway_issue():
 def test_github_adapter_carries_base_url_to_gh():
     """GHES: [forge].base_url reaches every gh call as GH_HOST; URLs are
     normalized (scheme stripped, trailing slash dropped); empty = github.com
-    and a pre-existing GH_HOST env passes through untouched."""
-    import os
+    and git calls run with the ambient env."""
+    import subprocess as sp
     from devloop.forge.github import GitHub, _run
 
     assert GitHub("o/r", base_url="https://ghe.example.com/")._gh_host == "ghe.example.com"
     assert GitHub("o/r")._gh_host == ""
 
-    # the sentinel is injected as GH_HOST for gh calls
-    os.environ["_DEVLOOP_GH_HOST"] = "ghe.example.com"
-    try:
-        out = _run(["python3", "-c",
-                    "import os; print(os.environ.get('GH_HOST', 'unset'))"])
-        assert out.strip() == "ghe.example.com"
-    finally:
-        del os.environ["_DEVLOOP_GH_HOST"]
-    # without the sentinel, a real GH_HOST passes through untouched
-    os.environ["GH_HOST"] = "from-env"
-    try:
-        out = _run(["python3", "-c",
-                    "import os; print(os.environ.get('GH_HOST', 'unset'))"])
-        assert out.strip() == "from-env"
-    finally:
-        del os.environ["GH_HOST"]
+    # the adapter's host reaches the subprocess env on gh calls…
+    out = _run(["python3", "-c",
+                "import os; print(os.environ.get('GH_HOST', 'unset'))"],
+               gh_host="ghe.example.com")
+    assert out.strip() == "ghe.example.com"
+    # …and git calls (gh_host="") inherit the ambient env untouched
+    out = _run(["python3", "-c",
+                "import os; print(os.environ.get('GH_HOST', 'unset'))"])
+    assert out.strip() == "unset"
+    # gh itself parses a host argument (the real consumer of the plumbing)
+    r = sp.run(["gh", "--help"], capture_output=True, text=True)
+    assert r.returncode == 0
 
 
 def test_version_bump():

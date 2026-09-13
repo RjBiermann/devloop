@@ -64,6 +64,21 @@ def merged(forge: Forge, issue: Issue | int, pr_number: int) -> None:
     forge.comment(n, f"{MERGED} #{pr_number} — closing the issue")
 
 
+def _scan_attempts(comments) -> tuple[int, int]:
+    """One pass over the comment ledger → (total attempts, attempts today).
+    Both budgets (max_attempts, max_per_day) read the same history."""
+    total = today_n = 0
+    today = f"{DAY} {date.today().isoformat()}\n"
+    for c in comments:
+        if c.body.startswith(RESET):
+            total = today_n = 0
+        elif any(m in c.body for m in MARKERS.values()):
+            total += 1
+            if c.body.startswith(today):
+                today_n += 1
+    return total, today_n
+
+
 def count(forge: Forge, issue: Issue) -> int:
     """Past failed attempts, counted from the issue's own comment ledger —
     no extra state. Guards the scheduled sweeps against burning tokens on
@@ -71,24 +86,10 @@ def count(forge: Forge, issue: Issue) -> int:
     (or issues `/retry`, which resets the budget from that point).
     Deferrals count too — a build that keeps losing the conflict gate is
     re-running its agent each sweep; the cap bounds that spend."""
-    count = 0
-    for c in forge.comments(issue.number):
-        if c.body.startswith(RESET):
-            count = 0
-        elif any(m in c.body for m in MARKERS.values()):
-            count += 1
-    return count
+    return _scan_attempts(forge.comments(issue.number))[0]
 
 
 def count_today(forge: Forge, issue: Issue) -> int:
-    """Failed attempts today (server-local dates as posted by failure()).
-    The daily cap bounds runaway spend per issue per day; like count(),
-    it reads the comment history — no extra state."""
-    today = date.today().isoformat()
-    n = 0
-    for c in forge.comments(issue.number):
-        if c.body.startswith(f"{DAY} {today}\n") and any(
-            m in c.body for m in MARKERS.values()
-        ):
-            n += 1
-    return n
+    """Failed attempts today — the daily cap bounds runaway spend per issue
+    per day. Same comment history, same protocol as count()."""
+    return _scan_attempts(forge.comments(issue.number))[1]

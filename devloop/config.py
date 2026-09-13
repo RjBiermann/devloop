@@ -96,13 +96,12 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return out
 
 
-def load(path: str | Path = "config.toml", global_path: str | Path | None = None) -> Config:
+def load(path: str | Path = "config.toml") -> Config:
     p = Path(path)
     if not p.exists():
         raise ConfigError(f"config not found: {p} — run `devloop init`")
     raw = tomllib.loads(p.read_text())
-    g = Path(global_path) if global_path else _global_path()
-    if g.exists():
+    if (g := _global_path()).exists():
         raw = _deep_merge(tomllib.loads(g.read_text()), raw)
     version = raw.get("version", 1)
     if version != 1:
