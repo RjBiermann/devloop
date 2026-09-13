@@ -3,7 +3,48 @@
 All notable changes to devloop. Semver-ish: minor bumps add features,
 patch bumps fix behavior bugs. Tag = release.
 
-## Unreleased — Forge owns its checkouts
+## Unreleased — M1 hardening
+
+- **Layered settings**: `~/.config/devloop/config.toml` (or
+  `$XDG_CONFIG_HOME`) holds org-standard defaults; the repo `config.toml`
+  overrides key-by-key (sections merge, repo wins) — pi's global/project
+  settings model. No global file = unchanged behavior.
+- **Budget caps**: `[pipeline].max_per_day` bounds failed attempts per
+  issue per day (runaway detection). Like `max_attempts`, it counts the
+  issue's comment ledger — failure comments now carry a dated
+  `devloop budget:` header; marker matching moved from line-start to
+  contains, so old comments still count.
+- **GitHub Enterprise Server**: `[forge].base_url = "ghe.example.com"`
+  reaches every `gh` call as `GH_HOST`; auth via `gh auth login
+  --hostname`. Git remote ops untouched.
+
+## v0.3.5 — forge fixes
+
+- Fixed rebase of open devloop PRs rebasing the local head instead of the
+  remote PR head; infrastructure errors during rebase skip the head for
+  this sweep instead of closing the PR (never destroy delivered work on a
+  transient git/network hiccup)
+
+## v0.3.4 — sweep on push to default branch
+
+- Push trigger on the default branch in the workflow template: main
+  moving runs the sweep immediately (rebase stale PRs, rebuild on
+  conflict) instead of waiting up to 30 min for the schedule. No new
+  code — `run_once` already owned the upkeep; redundant runs from a
+  release-bot's follow-up push are accepted (an idle sweep is a few
+  `gh` list calls, serialized by the concurrency group)
+
+## v0.3.2 / v0.3.3 — merge closeout
+
+- Merge closeout: a human-merged devloop PR (`devloop/issue-N`) posts a
+  `devloop PR merged` ledger entry and closes its issue — no more
+  ghost issues reopened by sweeps after their PR merged. New
+  `forge.complete_issue` (carve-out documented in the base class, same
+  precedent as `/retry`'s close_pr), `devloop merged` CLI, and a
+  `pull_request: closed` trigger in the workflow template (YAML-gated to
+  merged devloop branches, so other merges cost nothing)
+
+## v0.3.1 — Forge owns its checkouts
 
 - **Forge adapter interface changed** (custom adapters need a two-line
   update): `start_work(number, branch) -> str` now allocates the build
@@ -18,19 +59,8 @@ patch bumps fix behavior bugs. Tag = release.
 - Fixed build prompts using `.format()`: braces in an issue body
   (`def f(): return {'a': 1}`) crashed the build before the agent ran;
   substitution is now replace-based, like review and repair
-- Merge closeout: a human-merged devloop PR (`devloop/issue-N`) posts a
-  `devloop PR merged` ledger entry and closes its issue — no more
-  ghost issues reopened by sweeps after their PR merged. New
-  `forge.complete_issue` (carve-out documented in the base class, same
-  precedent as `/retry`'s close_pr), `devloop merged` CLI, and a
-  `pull_request: closed` trigger in the workflow template (YAML-gated to
-  merged devloop branches, so other merges cost nothing)
-- Push trigger on the default branch in the workflow template: main
-  moving runs the sweep immediately (rebase stale PRs, rebuild on
-  conflict) instead of waiting up to 30 min for the schedule. No new
-  code — `run_once` already owned the upkeep; redundant runs from a
-  release-bot's follow-up push are accepted (an idle sweep is a few
-  `gh` list calls, serialized by the concurrency group)
+- Dropped the speculative `ai-task` trigger (v0.2.x leftover); trigger
+  vocabulary is `ai-fix` / `ai-build` / `ai-remove`
 
 ## v0.3.0 — repair phase
 

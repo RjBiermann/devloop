@@ -1,4 +1,4 @@
-"""CLI: devloop init | once | watch | spec | review | command"""
+"""CLI: devloop init | once | watch | spec | review | command | merged"""
 
 import argparse
 import json
@@ -40,7 +40,7 @@ def _warn_bad_skills() -> None:
 
 
 def _runtime(cfg):
-    return get_forge(cfg.forge_kind, cfg.repo), get_runtime(cfg.runtime.engine, cfg.runtime.argv)
+    return get_forge(cfg.forge_kind, cfg.repo, cfg.base_url), get_runtime(cfg.runtime.engine, cfg.runtime.argv)
 
 
 def cmd_once(_args: argparse.Namespace) -> None:

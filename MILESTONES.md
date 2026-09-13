@@ -21,9 +21,12 @@
   username lists, deny wins). Default: maintainers — AI tokens cost money,
   strangers don't get to spend them. Enforced on spec approvals today;
   every future comment command routes through `forge.is_authorized`
-- [ ] Layered settings: global user defaults (`~/.config/devloop/config.toml`)
+- [x] Layered settings: global user defaults (`~/.config/devloop/config.toml`)
   + repo `config.toml` override — org-standard knobs once, per-repo deltas
-  (pi's global/project settings model)
+  (pi's global/project settings model). Sections deep-merge, repo wins;
+  missing global file = unchanged behavior.
+- [x] Budget caps: `pipeline.max_per_day` — per-issue daily attempt cap,
+  counted from the dated failure comments in the ledger (runaway detection)
 
 - [ ] **First end-to-end dogfood run** on a real repo: one real spec → clarify
   → decompose → build → PR. The MVP has never processed a real issue; the
@@ -45,17 +48,21 @@
   a delivery conflict gate (builds overlapping an open devloop PR's files
   defer to a later sweep; disjoint builds ship in parallel) —
   `max_parallel` is a throughput choice, never a correctness one
-- [ ] GitHub Enterprise Server: base-URL config on the GitHub adapter
-  (SaaS + self-hosted, same adapter)
+- [x] GitHub Enterprise Server: base-URL config on the GitHub adapter
+  (`[forge].base_url` → `GH_HOST` on every gh call; SaaS + self-hosted,
+  same adapter)
 - [ ] Skills freshness: `.devloop/lock` (pack version + per-skill content
   hash at copy time) + `devloop skills status|update|diff` — unmodified
   copies fast-forward via a PR branch; overridden copies are never touched,
   only reported; user-added skills ignored; deletions tombstoned
 - [ ] Tracking issues with verdict tables; chronic-item flags
-- [ ] Budget caps: max runs per issue per day; runaway detection
 - [ ] PR body: evidence summary + gate output template
-- [ ] Release discipline: CHANGELOG.md, semver policy (major bump = opt-in),
-  tag v0.1.0 at first `git init` + push
+- [x] Release discipline: CHANGELOG.md, semver policy (minor bump = opt-in
+  via `minor:` in the merge subject, majors manual), auto-tag on every
+  merge to master (`.github/workflows/release.yml`, ADR-0002) — shipped
+  v0.1.0…v0.3.5
+- [x] PR body: evidence summary + gate output template (`delivery.py` —
+  agent/gate lines + agent report tail; "Human merge required" always)
 
 ## M2 — Forge breadth
 

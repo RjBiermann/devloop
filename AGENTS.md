@@ -12,7 +12,7 @@ for the roadmap before changing anything.
 
 ```bash
 python3 tests/test_devloop.py    # the check — run before every handoff
-python3 -m devloop.cli --help    # CLI surface
+python3 -m devloop.cli --help    # CLI surface: init | once | watch | spec <issue> | review <pr> | command | merged
 ```
 
 ## Conventions
@@ -36,6 +36,13 @@ python3 -m devloop.cli --help    # CLI surface
   **Runners** need no adapter — any shell that runs `devloop once`.
 - Agent output that changes state must end with a `devloop: status=<phase>`
   marker — the state machine parses markers, not prose.
+- **Domain vocabulary lives in `CONTEXT.md`; decisions in `docs/adr/`.** Use
+  the glossary's terms (Sweep, Delivery, Review, Repair, Closeout, Ledger)
+  in code, tests, and issues — don't drift to synonyms. ADR-0001 is the law
+  for review/repair: review stays findings-only, repair acts.
+- **Versions are automatic (ADR-0002):** every merge to master gets a tag
+  via CI (patch bump; `minor:` in the merge subject opts into minor). Never
+  tag by hand, never bump `version.py` manually.
 
 ## Label vocabulary (the standard adopting repos share)
 
@@ -49,7 +56,10 @@ python3 -m devloop.cli --help    # CLI surface
 
 Trigger labels (`ai-*`) are mutually exclusive — an issue carrying two is an
 error. Agents never apply trigger labels, never merge, never approve, never
-close. Labels create work; commands re-fire it.
+close on their own judgment. The one carve-out (same as `/retry`'s close):
+devloop executes an authorized human's sanction — `/retry` closing a stale
+PR, or closeout closing an issue whose devloop PR a human just merged
+(ADR/CONTEXT: Closeout). Labels create work; commands re-fire it.
 
 ## Evidence conventions
 

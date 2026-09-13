@@ -96,7 +96,9 @@ devloop watch             # poll loop for local / CI-less setups
 ```
 
 On GitHub, the bundled workflow file runs `devloop once` on label events,
-comments, and a schedule for the drift monitor. Per-forge auth, scheduling,
+pushes to the default branch, and a schedule; `devloop command` on comment
+commands; and `devloop merged` closes out issues whose devloop PR a human
+just merged. Per-forge auth, scheduling,
 label setup, and access-control mapping: see **[docs/environments.md](docs/environments.md)**
 (GitLab/Gitea are M2 — no adapter yet).
 
@@ -115,17 +117,35 @@ remove = "ai-remove"
 [runtime]
 engine = "opencode"      # argv is fully overridable — any agent CLI works
 argv = ["opencode", "run"]
-skills_path = "skills/"  # your skills override the bundled pack
 
 [pipeline]
 verify = ""              # your gate, e.g. "make verify"
-review_rounds = 2
+review_rounds = 2        # AI pre-review rounds; 0 = off
+repair_rounds = 1        # AI fix attempts on review findings before the
+                         # human sees them; 0 = findings go straight up
 max_parallel = 1           # raise to build concurrently; each build gets its
                            # own worktree and file-overlap deliveries defer
+max_attempts = 3           # failed attempts per issue before a human re-labels
+max_per_day = 0            # per-issue daily attempt cap; 0 = unlimited
+                           # (runaway detection — a poison task can't burn
+                           # tokens all day)
 poll_seconds = 300
+timeout = 1800             # per-agent-run timeout, seconds
 ```
 
 Everything is overridable; zero-config works with defaults.
+
+## Layered settings
+
+Org-standard knobs once, per-repo deltas on top (pi's global/project
+model): `~/.config/devloop/config.toml` holds the defaults; the repo
+`config.toml` overrides key-by-key — sections merge, repo wins. No global
+file, no change in behavior.
+
+GitHub Enterprise Server: set `[forge].base_url = "ghe.example.com"` —
+it reaches every `gh` call as `GH_HOST`; authenticate with
+`gh auth login --hostname ghe.example.com`. Git remote operations are
+untouched (the checkout's remote already points at the right host).
 
 ## Known MVP limits
 

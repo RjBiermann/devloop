@@ -19,8 +19,11 @@ gh auth login          # once per machine/runner
 
 - The adapter shells out to `gh` and plain `git` — whatever `gh` is
   authenticated as is the agent's identity.
-- Enterprise Server: the same adapter works; `gh` picks the host from your
-  `GH_HOST` env or `gh auth login --hostname`.
+- Enterprise Server: set `[forge].base_url = "ghe.example.com"` in the
+  repo config — the adapter injects it as `GH_HOST` on every `gh` call
+  (a pre-existing `GH_HOST` env still wins for local overrides). Auth via
+  `gh auth login --hostname ghe.example.com`. Git remote operations are
+  untouched — the checkout's remote already points at the right host.
 
 ### Running modes
 
