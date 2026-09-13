@@ -23,13 +23,13 @@ concurrency:
 
 jobs:
   run:
+    # reserved ai- prefix is the trigger contract (ADR-0003): a config
+    # rename within the ai- namespace never orphans the trigger — the
+    # workflow filter never hardcodes label names
     if: >-
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'schedule' ||
       github.event_name == 'push' ||
-      # reserved ai- prefix is the contract (ADR-0003): a config rename
-      # within the ai- namespace never orphans the trigger — the workflow
-      # filter never hardcodes label names
       startsWith(github.event.label.name, 'ai-') ||
       (github.event_name == 'pull_request' &&
         github.event.pull_request.merged == true &&
