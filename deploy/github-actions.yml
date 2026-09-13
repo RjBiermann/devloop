@@ -45,7 +45,9 @@ jobs:
         with: { fetch-depth: 0 }
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
-      - run: pip install devloop  # or: pip install git+https://github.com/YOURORG/devloop
+      # Pin the install: pip install git+https://github.com/YOURORG/devloop@vX.Y.Z
+      # (or a PyPI pin) — unpinned, a broken devloop commit breaks the pipeline.
+      - run: pip install devloop
       - name: Run pipeline
         if: github.event_name != 'issue_comment'
         run: devloop once

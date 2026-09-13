@@ -24,6 +24,24 @@ gh auth login          # once per machine/runner
   (a pre-existing `GH_HOST` env still wins for local overrides). Auth via
   `gh auth login --hostname ghe.example.com`. Git remote operations are
   untouched — the checkout's remote already points at the right host.
+- **`GITHUB_TOKEN` (the Actions-provided App token) cannot push commits
+  that modify files under `.github/workflows/`** — the push is rejected
+  regardless of `permissions: contents: write`, and the run's work is
+  silently discarded at delivery. Fine-grained PATs with **Contents +
+  Workflows: read/write** are unaffected. If agent work can touch CI
+  plumbing, install a PAT in place of the checkout token:
+
+  ```yaml
+  - name: PAT credentials (GITHUB_TOKEN cannot push workflow files)
+    env:
+      AGENT_PAT: ${{ secrets.AGENT_PAT }}
+    run: |
+      B64=$(printf 'x-access-token:%s' "$AGENT_PAT" | base64 -w0)
+      git config http.https://github.com/.extraheader "AUTHORIZATION: basic $B64"
+  ```
+
+  The PAT must live in the `extraheader` itself — it overrides remote-URL
+  credentials, so fetch and push both use it.
 
 ### Running modes
 
@@ -31,6 +49,13 @@ gh auth login          # once per machine/runner
 |---|---|
 | **GitHub Actions** (recommended) | copy `deploy/github-actions.yml` to `.github/workflows/devloop.yml` in the target repo. Runs on trigger-label events + `workflow_dispatch`. Needs `permissions: issues: write, pull-requests: write, contents: write` (already in the template). `GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}` makes `gh` work in-run. |
 | **Local / dedicated box** | `devloop watch` (polls every `pipeline.poll_seconds`) under tmux/systemd/cron. |
+
+### Pinning
+
+Pin the devloop install to a tag (`pip install <source>@vX.Y.Z`). An
+unpinned install means a broken devloop commit breaks every adopting
+pipeline at once — the template ships unpinned only because the install
+source is per-org (your devloop checkout, not PyPI).
 
 ### Labels
 
