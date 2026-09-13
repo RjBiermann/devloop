@@ -98,6 +98,17 @@ adopter's humans keep the guardrails: labels, merges, closes. devloop
 versions are not adopter versions — the adopter pins a devloop tag
 (Pinning) and upgrades deliberately.
 
+### Upgrade
+
+An adopter's deliberate move to a newer devloop tag — a pin bump, never
+auto-following master (see the Adopter entry). The boundary is the config
+schema version: a devloop that doesn't speak the adopter's `config.toml`
+schema errors loudly and names the fix; nothing migrates silently. Not
+the same as Rebuild or Retry (pipeline-initiated redos of one build) — an
+Upgrade is human-initiated and changes the pipeline itself, not one run.
+Version counts merges, not significance (see Version); the CHANGELOG,
+not the number, is what you read before upgrading.
+
 ### Review
 
 Finding what's wrong before a human merges. The **review module**

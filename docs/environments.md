@@ -7,6 +7,26 @@ their sections say what's pending, not fiction.
 
 ---
 
+## Updating devloop
+
+Adopters upgrade deliberately: the install is pinned to a tag, and you
+move the pin when you choose.
+
+1. Read the CHANGELOG for the tags between yours and the target.
+2. Bump the pinned tag in the workflow (`pip install <source>@vX.Y.Z`).
+3. Push — the next sweep runs on the new version.
+
+Two contracts hold at the boundary:
+
+- **Config schema version is the upgrade gate.** A devloop that doesn't
+  speak your `config.toml`'s schema version errors loudly at startup and
+  names the fix — nothing migrates silently. (Schema 1 is current.)
+- **Version counts merges, not significance** (CONTEXT.md → Version):
+  patch by default, `minor:` in the merge subject declares a minor.
+  Don't infer risk from the number — read the CHANGELOG.
+
+---
+
 ## GitHub (SaaS + Enterprise Server)
 
 Fully supported (`forge.kind = "github"`, adapter: `gh` CLI + git).
