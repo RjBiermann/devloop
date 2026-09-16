@@ -1,6 +1,7 @@
 """The one check: guardrails hold and trigger routing is correct."""
 
 import sys
+import json
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -1060,9 +1061,46 @@ def test_version_bump():
     assert 'version = "0.3.0"' in vmod._PYPROJECT.read_text()
 
 
+def test_runtime_denylists_bind_agent_shell():
+    """The forge-level wall is advisory for the agent's own shell; the runtime
+    must bind the same human-only ops via engine tool policies: claude gets
+    --disallowedTools, opencode gets OPENCODE_CONFIG_CONTENT deny rules."""
+    import devloop.runtime as rt
+    captured = {}
+
+    def fake_run(argv, **kw):
+        captured["argv"] = argv
+        captured["env"] = kw.get("env")
+        return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    real_run = rt.subprocess.run
+    rt.subprocess.run = fake_run
+    try:
+        for engine, argv in [("claude", ["claude", "-p"]),
+                             ("opencode", ["opencode", "run"])]:
+            captured.clear()
+            rt.AgentRuntime(argv).run("do work", cwd=".", timeout=60)
+            assert captured["argv"][:2] == argv and captured["argv"][-1] == "do work"
+            if engine == "claude":
+                flags = captured["argv"][2:-1]
+                assert flags[0] == "--disallowedTools"
+                for c in rt.DENY_COMMANDS:
+                    assert f"Bash({c}:*)" in flags[1]
+            else:
+                content = json.loads(captured["env"]["OPENCODE_CONFIG_CONTENT"])
+                bash = content["permission"]["bash"]
+                for c in rt.DENY_COMMANDS:
+                    assert bash[c] == "deny" and bash[f"{c} *"] == "deny"
+    finally:
+        rt.subprocess.run = real_run
+    # unknown custom engines are the user's control — no binding, no crash
+    rt.AgentRuntime(["pi", "--mode", "text"])  # constructor only; run() passes through
+
+
 if __name__ == "__main__":
     test_human_only_ops_are_blocked()
     test_spec_state_machine()
+    test_runtime_denylists_bind_agent_shell()
     test_spec_never_reprocesses_finalized()
     test_run_once_skips_issues_with_open_pr()
     test_queue_full_starts_nothing()

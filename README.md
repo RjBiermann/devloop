@@ -149,10 +149,13 @@ untouched (the checkout's remote already points at the right host).
 
 ## Known MVP limits
 
-- **Guardrails bind devloop's forge calls, not the agent's shell.** The agent
-  runtime can still invoke `gh`/`git` directly — real enforcement (tool
-  denylists at the runtime layer) lands in M1. Until then, run agents with
-  your runtime's own permission controls.
+- Guardrails bind devloop's forge calls and (since the runtime denylists
+  landed) the agent's own shell for the built-in engines: claude gets
+  `--disallowedTools`, opencode gets `OPENCODE_CONFIG_CONTENT` deny rules for
+  the human-only commands (`gh pr merge`, `gh pr review --approve`,
+  `gh issue close`, `gh issue/pr edit`, `git merge`). Custom-argv engines
+  must bind their own equivalent policies — devloop can't know their flag
+  surface.
 - `devloop init` reads bundled templates from the source tree — install
   editable (`pip install -e .`) until M1 ships proper package data.
 - Config keys are validated with a warning on unknown keys; unknown values

@@ -28,9 +28,16 @@
 - [x] Budget caps: `pipeline.max_per_day` — per-issue daily attempt cap,
   counted from the dated failure comments in the ledger (runaway detection)
 
-- [ ] **First end-to-end dogfood run** on a real repo: one real spec → clarify
-  → decompose → build → PR. The MVP has never processed a real issue; the
-  failures of that run reshape everything below. Do this before any of the rest.
+- [x] **First end-to-end dogfood run** on a real repo
+  (RjBiermann/fictional-octo-fiesta): trigger → build → verify gate → PR →
+  merge proven over ~40 PRs; review rounds spawned a full findings ladder
+  (review #347 → ai-fix/ai-task issues); budget/retry machinery exercised.
+  Its failures already reshaped the runtime (per-kind runtime, build budget
+  split). Still unexercised: the **spec loop** (`devloop spec <n>` → clarify
+  → decompose → approved → sub-issues) — every issue there was hand-authored
+  or review-generated; track it as part of M2 dogfooding.
+  Runtime permission denylists (below) and M2's GitLab adapter pick up from
+  this repo as the live test bed.
 - [x] `/retry`, `/review` comment commands — access-gated via
   `forge.is_authorized`; `/retry` resets the attempt budget, closes the
   stale devloop PR (executing an authorized human's sanction), re-fires;
@@ -41,9 +48,12 @@
   carries the thread + its prior findings (stateless sessions that see
   the complete review state); `LGTM` stops the budget early; customizable
   via repo `skills/pre-review/SKILL.md`; on-demand via `devloop review <pr>`
-- [ ] Runtime permission denylists: guardrails must also bind the agent's
-  shell (`gh`/`git` calls the agent makes itself), via opencode/claude tool
-  policies — the adapter-level wall is advisory until this lands
+- [x] Runtime permission denylists: guardrails also bind the agent's
+  shell (`gh`/`git` calls the agent makes itself) — claude gets
+  `--disallowedTools`, opencode gets `OPENCODE_CONFIG_CONTENT` deny rules,
+  mirroring `guardrails.HUMAN_ONLY` (`devloop.runtime.DENY_COMMANDS`); the
+  adapter-level wall is no longer advisory for built-in engines. Custom-argv
+  engines bind their own policies.
 - [x] Conflict management: parallel builds with per-build git worktrees +
   a delivery conflict gate (builds overlapping an open devloop PR's files
   defer to a later sweep; disjoint builds ship in parallel) —
