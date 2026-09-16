@@ -80,7 +80,11 @@
   the Forge interface is unproven until a second adapter passes conformance
 - [ ] Gitea/Forgejo adapter (GitHub-API-compatible; may nearly reuse the
   GitHub adapter minus `gh` — token REST instead)
-- [ ] Forge conformance test suite: one suite, every adapter must pass
+- [x] Forge conformance test suite: one suite, every adapter must pass
+  (`tests/conformance.py` — scenario functions + per-adapter Harness; offline
+  tier: guardrails, authority ladder, git lifecycle via real git, no forge
+  API; gh/glab plumbing stays adapter-specific). GitHub registered; new
+  adapters join by adding a Harness.
 - [ ] Config-driven label vocabulary renaming (all names overridable)
 - [ ] Runner cookbook: one doc page covering GitLab CI, Jenkins, Buildkite,
   cron — all reduce to "checkout + install devloop + `devloop once`"

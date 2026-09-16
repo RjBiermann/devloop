@@ -1097,10 +1097,21 @@ def test_runtime_denylists_bind_agent_shell():
     rt.AgentRuntime(["pi", "--mode", "text"])  # constructor only; run() passes through
 
 
+def test_forge_conformance():
+    """M2: one conformance suite, every adapter must pass. New adapters
+    register a Harness in tests/conformance.ADAPTERS and get this for free."""
+    import conformance
+    failures: list[str] = []
+    for harness_cls in conformance.ADAPTERS:
+        failures += conformance.run_offline(harness_cls)
+    assert not failures, "conformance failures:\n" + "\n".join(failures)
+
+
 if __name__ == "__main__":
     test_human_only_ops_are_blocked()
     test_spec_state_machine()
     test_runtime_denylists_bind_agent_shell()
+    test_forge_conformance()
     test_spec_never_reprocesses_finalized()
     test_run_once_skips_issues_with_open_pr()
     test_queue_full_starts_nothing()
