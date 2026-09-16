@@ -11,6 +11,8 @@ import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .runtime import get_runtime
+
 
 class ConfigError(Exception):
     pass
@@ -26,10 +28,24 @@ class Labels:
     def triggers(self) -> list[str]:
         return [self.fix, self.new, self.remove]
 
+# Canonical build kinds (kind_for maps trigger labels onto these; a label
+# rename within the ai- prefix changes the label, never the kind).
+KINDS = ("fix", "new", "remove")
+
+
 @dataclass
 class Runtime:
     engine: str = "opencode"
     argv: list[str] = field(default_factory=lambda: ["opencode", "run"])
+    kind_argv: dict[str, list[str]] = field(default_factory=dict)  # from [runtime.<kind>]
+
+    def for_kind(self, kind: str | None):
+        """Runtime for a build kind, or None when no [runtime.<kind>] section
+        is configured (caller keeps its default runtime). Kinds are canonical
+        (KINDS), so a label rename can never orphan a kind section."""
+        if kind and self.kind_argv.get(kind):
+            return get_runtime(self.engine, self.kind_argv[kind])
+        return None
 
 
 @dataclass
@@ -39,6 +55,10 @@ class Pipeline:
     repair_rounds: int = 1   # AI repair attempts on review findings; 0 = findings go straight to the human
     poll_seconds: int = 300
     timeout: int = 1800
+    # issue-scoped runs (build, spec) may legitimately outgrow `timeout` —
+    # greenfield work is a different magnitude than review/repair, which
+    # stay on `timeout`
+    build_timeout: int = 3600
     max_attempts: int = 3  # failures allowed per issue before it needs a human re-label
     max_per_day: int = 0   # per-issue daily attempt cap; 0 = unlimited (runaway detection)
     max_parallel: int = 1  # concurrent builds; 1 = serial, zero conflicts by construction
@@ -114,7 +134,7 @@ def load(path: str | Path = "config.toml") -> Config:
         base_url=raw.get("forge", {}).get("base_url", ""),
     )
     _apply(cfg.labels, raw.get("labels", {}), "labels")
-    _apply(cfg.runtime, raw.get("runtime", {}), "runtime")
+    _apply(cfg.runtime, _kind_sections(raw.get("runtime", {}), cfg.runtime), "runtime")
     _apply(cfg.pipeline, raw.get("pipeline", {}), "pipeline")
     _apply(cfg.access, raw.get("access", {}), "access")
     if cfg.access.mode not in {"owners", "maintainers", "collaborators", "everyone"}:
@@ -127,6 +147,23 @@ def load(path: str | Path = "config.toml") -> Config:
     if not cfg.repo:
         raise ConfigError("forge.repo is required")
     return cfg
+
+
+def _kind_sections(runtime_raw: dict, runtime: Runtime) -> dict:
+    """Pull [runtime.<kind>] sub-tables out of the runtime section (full argv
+    per canonical kind). Unknown kind names fail loudly — a typo would
+    otherwise configure a runtime that never fires."""
+    for key in list(runtime_raw):
+        val = runtime_raw[key]
+        if isinstance(val, dict) and "argv" in val:
+            if key not in KINDS:
+                raise ConfigError(
+                    f"[runtime.{key}] unknown kind {key!r} — kinds: "
+                    " | ".join(KINDS)
+                )
+            runtime.kind_argv[key] = val["argv"]
+            del runtime_raw[key]
+    return runtime_raw
 
 
 def _apply(obj, section: dict, name: str) -> None:

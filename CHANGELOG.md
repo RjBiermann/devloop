@@ -5,8 +5,12 @@ patch bumps fix behavior bugs. Tag = release.
 
 ## Unreleased
 
-(nothing yet — releases are automatic (ADR-0002); notes land here when a
-merge ships)
+- **Per-kind runtime** (`[runtime.<kind>]`, ADR-0004): a full-argv override
+  per canonical build kind for issue-scoped runs — greenfield builds can
+  route a stronger agent than fixes do. **Build budget split**:
+  `pipeline.build_timeout` (default 3600) now budgets issue-scoped runs;
+  `pipeline.timeout` (default 1800) stays for review/repair. Both keys are
+  additive — existing configs behave exactly as before.
 
 ## v0.3.8 — template + docs hardening
 

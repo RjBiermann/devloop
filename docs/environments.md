@@ -94,6 +94,18 @@ done
 `collaborators` → `admin|maintain|write`. `everyone` skips the check.
 `allow`/`deny` username lists apply on top (deny wins).
 
+### Per-kind runtime + run budgets
+
+- `[runtime.<kind>]` (kind ∈ `fix | new | remove`) holds a **full `argv`**
+  that replaces the global runtime for that kind's issue-scoped runs
+  (build, spec) — route a stronger agent at greenfield work without
+  paying for it on fixes (ADR-0004). No section → the global
+  `[runtime].argv`. Unknown kind names fail loudly.
+- `[pipeline].build_timeout` (default 3600 s) budgets issue-scoped agent
+  runs (build, spec); `[pipeline].timeout` (default 1800 s) budgets
+  PR-scoped runs (review, repair). A timeout counts as a failed attempt —
+  `max_attempts` still pages a human after 3.
+
 ### Trigger labels + branching
 
 - Apply a trigger label to an issue → the workflow fires a build.

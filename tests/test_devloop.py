@@ -827,6 +827,110 @@ def test_rebase_branch_real_git_resolves_remote_pr_head():
         assert ancestor.returncode == 0  # rebased onto current main
 
 
+def test_issue_scoped_runs_use_build_budget():
+    """Issue-scoped runs (build) get build_timeout; PR-scoped runs (review)
+    keep timeout — greenfield builds are a different magnitude than reviews.
+    Spec runs (also issue-scoped) share the build budget."""
+    import devloop.core as core
+    from devloop.review import review_pr
+
+    cfg = Config(repo="o/r", pipeline=Pipeline(review_rounds=1))
+    assert cfg.pipeline.build_timeout == 3600 and cfg.pipeline.timeout == 1800
+
+    class F(Forge):
+        def __init__(self):
+            self.notes, self.finished, self.prs = [], [], []
+
+        def start_work(self, n, branch): return f"/fake/wt-{n}"
+        def finish_work(self, n): self.finished.append(n)
+        def comment(self, n, body): self.notes.append(body)
+        def comments(self, n): return [Comment("x", b) for b in self.notes]
+        def commit_all(self, msg, workdir): return True
+        def pr_for_branch(self, b): return None
+        def open_pr_head_branches(self): return []
+        def is_owner(self, a): return True
+        def is_maintainer(self, a): return True
+        def is_collaborator(self, a): return True
+
+    class R:
+        name = "fake"
+        def run(self, prompt, cwd, timeout):
+            self.timeout = timeout
+            return type("Res", (), {"ok": True, "output": "work"})()
+
+    r = R()
+    core.process_issue(cfg, F(), r, Issue(9, "t9", "b", ["ai-fix"]))
+    assert r.timeout == cfg.pipeline.build_timeout  # build run: build budget
+
+    rr = R()
+    review_pr(cfg, _cmd_forge(), rr, 55)
+    assert rr.timeout == cfg.pipeline.timeout       # review run: PR budget
+
+
+def test_kind_runtime_config_parsing():
+    """[runtime.<kind>] full-argv sections parse per canonical kind; an
+    unknown kind name fails loudly; unlisted kinds fall back to global."""
+    import tempfile
+    from devloop.config import ConfigError, load
+
+    with tempfile.TemporaryDirectory() as tmp:
+        p = Path(tmp) / "config.toml"
+        p.write_text(
+            "[forge]\nrepo = 'o/r'\n"
+            "[runtime]\nengine = 'pi'\n"
+            "[runtime.new]\nargv = ['pi', '--mode', 'text']\n"
+        )
+        cfg = load(p)
+        assert cfg.runtime.kind_argv["new"] == ["pi", "--mode", "text"]
+        assert cfg.runtime.for_kind("new").argv == ["pi", "--mode", "text"]
+        assert cfg.runtime.for_kind("fix") is None   # unlisted kind → global argv
+        assert cfg.runtime.for_kind(None) is None
+
+        p.write_text("[forge]\nrepo = 'o/r'\n[runtime.newsite]\nargv = ['x']\n")
+        try:
+            load(p)
+        except ConfigError as e:
+            assert "newsite" in str(e)
+        else:
+            raise AssertionError("unknown kind section did not raise")
+
+
+def test_build_flow_uses_kind_runtime():
+    """A [runtime.<kind>] override replaces the global runtime for that
+    kind's build run; the heartbeat reports the agent actually run."""
+    import devloop.core as core
+    from devloop.config import Runtime
+
+    class F(Forge):
+        def __init__(self):
+            self.notes, self.finished, self.prs = [], [], []
+
+        def start_work(self, n, branch): return f"/fake/wt-{n}"
+        def finish_work(self, n): self.finished.append(n)
+        def comment(self, n, body): self.notes.append(body)
+        def comments(self, n): return [Comment("x", b) for b in self.notes]
+        def commit_all(self, msg, workdir): return True
+        def pr_for_branch(self, b): return None
+        def open_pr_head_branches(self): return []
+        def is_owner(self, a): return True
+        def is_maintainer(self, a): return True
+        def is_collaborator(self, a): return True
+
+    class R:
+        name = "global"
+        def run(self, prompt, cwd, timeout):
+            raise AssertionError("global runtime must not run a kind override")
+
+    cfg = Config(repo="o/r",
+                 runtime=Runtime(kind_argv={"fix": ["kindagent", "run"]}),
+                 pipeline=Pipeline(review_rounds=0))
+    f = F()
+    out = core.process_issue(cfg, f, R(), Issue(7, "t7", "b", ["ai-fix"]))
+    assert f.prs == ["devloop/issue-7"]              # override ran, not R
+    assert "agent `kindagent`" in f.notes[0]          # heartbeat names it
+    assert out.pr == "devloop/issue-7"
+
+
 def test_layered_settings_global_repo_merge():
     """M1 layered settings: ~/.config/devloop/config.toml = org defaults,
     repo config.toml overrides key-by-key; sections merge, repo wins.

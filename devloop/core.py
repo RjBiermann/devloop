@@ -47,12 +47,15 @@ def process_issue(cfg: Config, forge: Forge, runtime: AgentRuntime, issue: Issue
     its own checkout; callers never name paths."""
     kind = cfg.kind_for(issue.labels)  # raises if triggers are not exclusive
     branch = f"devloop/issue-{issue.number}"
+    # per-kind runtime override: [runtime.<kind>] full argv wins for this
+    # build; no section configured → the caller's global runtime
+    agent = cfg.runtime.for_kind(kind) or runtime
     # progress heartbeat: the issue timeline shows when a build starts and
     # which attempt this is — comments are free, silence is not (a 30-min
     # agent run with no visible start looks identical to a broken pipeline)
     forge.comment(issue.number,
                   f"build started — attempt {ledger.count(forge, issue) + 1}/"
-                  f"{cfg.pipeline.max_attempts}, kind `{kind}`, agent `{runtime.name}`, "
+                  f"{cfg.pipeline.max_attempts}, kind `{kind}`, agent `{agent.name}`, "
                   f"branch `{branch}`")
     # Forge allocates the private checkout (one per build — parallel agents
     # must never share a working tree); process_issue owns the cleanup bracket.
@@ -60,12 +63,12 @@ def process_issue(cfg: Config, forge: Forge, runtime: AgentRuntime, issue: Issue
     try:
         res = None
         try:
-            res = runtime.run(
+            res = agent.run(
                 PROMPTS[kind]
                 .replace("{n}", str(issue.number))
                 .replace("{title}", issue.title)
                 .replace("{body}", issue.body),
-                cwd=workdir, timeout=cfg.pipeline.timeout)
+                cwd=workdir, timeout=cfg.pipeline.build_timeout)
         except Exception as e:
             # Timeout/explosion mid-run: no delivery, but the human must know.
             ledger.failure(forge, issue, "agent", note=f"no PR opened ({type(e).__name__})", tail=str(e))

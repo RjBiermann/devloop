@@ -76,12 +76,16 @@ def process_spec(cfg: Config, forge: Forge, runtime: AgentRuntime, number: int) 
     if phase == "finalized":
         return phase  # terminal: sub-issues exist, spec rewritten — nothing to redo
     issue = forge.issue(number)
+    # spec runs are issue-scoped like builds: per-kind runtime override and
+    # the build budget — greenfield specs outgrow `timeout` too
+    kind = cfg.kind_for(issue.labels)
+    agent = cfg.runtime.for_kind(kind) or runtime
     prompt = (
         f"You are refining a spec for issue #{number}. Do NOT write code.\n\n"
         f"## Issue #{number}: {issue.title}\n{issue.body}\n\n"
         f"## Conversation so far\n" + "\n---\n".join(c.body for c in comments) + "\n\n"
         + SPEC_INSTRUCTIONS[phase]
     )
-    res = runtime.run(prompt, cwd=".", timeout=cfg.pipeline.timeout)
+    res = agent.run(prompt, cwd=".", timeout=cfg.pipeline.build_timeout)
     forge.comment(number, res.output.strip())
     return parse_status(res.output) or phase

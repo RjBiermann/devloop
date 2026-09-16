@@ -76,6 +76,16 @@ so a config rename can never orphan the trigger. Not to be confused with
 `ready-for-agent` (a triage label: specified and queued, but no build
 until a trigger label lands).
 
+### Kind
+
+The canonical build class an issue dispatches as: `fix`, `new`, or
+`remove` — mapped from the trigger label by config (`kind_for`), never
+inferred from prose. Kinds key the per-kind config surface
+(`[runtime.<kind>]`, prompt selection), so renaming a label within the
+`ai-` prefix changes the label, never the kind. Not the same as the
+trigger label itself: the label is the human-applied marker; the kind is
+what the pipeline dispatches on (ADR-0004).
+
 ### Workflow template
 
 The copy-ready GitHub Actions file an adopter starts from: `deploy/github-actions.yml`,
