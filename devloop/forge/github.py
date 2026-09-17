@@ -10,7 +10,7 @@ import shutil
 import subprocess
 import tempfile
 
-from .base import Comment, Forge, Issue
+from .base import Comment, Forge, Issue, OpenPR
 
 
 def _ensure_identity(cwd: str) -> None:
@@ -143,10 +143,16 @@ class GitHub(Forge):
             shutil.rmtree(os.path.dirname(wt), ignore_errors=True)
             subprocess.run(["git", "worktree", "prune"], capture_output=True)
 
-    def open_pr_head_branches(self) -> list[str]:
+    def open_devloop_prs(self) -> list[OpenPR]:
+        """One gh call for the whole open-devloop-PR picture (number, head,
+files) — the sweep and the delivery conflict gate read this snapshot;
+they never fan out per-PR."""
         out = _run(["gh", "pr", "list", "-R", self.repo, "--state", "open",
-                    "--json", "headRefName", "--jq", "[.[].headRefName]"], gh_host=self._gh_host)
-        return json.loads(out or "[]")
+                    "--json", "number,headRefName,files"], gh_host=self._gh_host)
+        return [OpenPR(it["number"], it["headRefName"],
+                       [f["path"] for f in it.get("files", [])])
+                for it in json.loads(out or "[]")
+                if it["headRefName"].startswith("devloop/")]
 
     # --- trigger authority (GitHub roles via collaborator permission API) ---
     def _permission(self, author: str) -> str:
@@ -229,11 +235,6 @@ class GitHub(Forge):
 
     def complete_issue(self, number: int) -> None:
         _run(["gh", "issue", "close", str(number), "-R", self.repo], gh_host=self._gh_host)
-
-    def pr_files(self, pr_number: int) -> list[str]:
-        out = _run(["gh", "pr", "view", str(pr_number), "-R", self.repo,
-                    "--json", "files", "--jq", "[.files[].path]"], gh_host=self._gh_host)
-        return json.loads(out or "[]")
 
     def branch_files(self, branch: str) -> list[str]:
         default = _run(["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"]).strip()

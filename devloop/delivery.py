@@ -56,13 +56,11 @@ def deliver(cfg: Config, forge: Forge, runtime: AgentRuntime, issue: Issue,
             # pushed) and retry after the other PR merges; opening both would
             # create a merge conflict a human has to untangle.
             touched = set(forge.branch_files(branch))
-            conflicts = []
-            for head in forge.open_pr_head_branches():
-                if not head.startswith("devloop/") or head == branch:
-                    continue
-                other = forge.pr_for_branch(head)
-                if other and touched & set(forge.pr_files(other)):
-                    conflicts.append(f"#{other} ({head})")
+            conflicts = [
+                f"#{p.number} ({p.head})"
+                for p in forge.open_devloop_prs()
+                if p.head != branch and touched & set(p.files)
+            ]
             if conflicts:
                 ledger.failure(forge, issue, "deferred",
                                note=f"branch `{branch}` touches files also touched by "

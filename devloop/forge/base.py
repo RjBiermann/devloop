@@ -19,6 +19,15 @@ class Comment:
     body: str
 
 
+@dataclass
+class OpenPR:
+    """An open PR scoped to what the pipeline reads about it: number, head
+    branch, files touched (the delivery conflict gate's view)."""
+    number: int
+    head: str
+    files: list[str] = field(default_factory=list)
+
+
 class Forge:
     """Adapter for one git forge. Subclasses implement the primitives;
     guardrails are enforced here in the base so no adapter can forget."""
@@ -83,10 +92,6 @@ class Forge:
         real forge merge event — never from agent output."""
         raise NotImplementedError
 
-    def pr_files(self, pr_number: int) -> list[str]:
-        """Files touched by an open PR (for the delivery conflict gate)."""
-        raise NotImplementedError
-
     def pr_comments(self, pr_number: int) -> list[Comment]:
         """PR review-thread comments — the reviewer reads the thread so
         human replies ("already fixed", "out of scope") aren't ignored."""
@@ -119,8 +124,11 @@ class Forge:
         work is cheaper to redo than human conflict resolution)."""
         raise NotImplementedError
 
-    def open_pr_head_branches(self) -> list[str]:
-        """Head branch names of all open PRs (sweep slot math + conflict gate)."""
+    def open_devloop_prs(self) -> list[OpenPR]:
+        """All open PRs whose head branch is devloop-owned, with the files
+each touches. One snapshot read instead of a per-PR fan-out: the sweep's
+slot math, the delivered-set, and the delivery conflict gate all read
+this single call."""
         raise NotImplementedError
 
     def pr_body(self, pr_number: int) -> str:

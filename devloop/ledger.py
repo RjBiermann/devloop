@@ -79,6 +79,13 @@ def _scan_attempts(comments) -> tuple[int, int]:
     return total, today_n
 
 
+def budget(forge: Forge, issue: Issue) -> tuple[int, int]:
+    """One pass over the ledger → (past attempts, attempts today). Both
+    caps (max_attempts, max_per_day) read the same scan — the queue never
+    fetches an issue's comment history twice."""
+    return _scan_attempts(forge.comments(issue.number))
+
+
 def count(forge: Forge, issue: Issue) -> int:
     """Past failed attempts, counted from the issue's own comment ledger —
     no extra state. Guards the scheduled sweeps against burning tokens on
@@ -87,9 +94,3 @@ def count(forge: Forge, issue: Issue) -> int:
     Deferrals count too — a build that keeps losing the conflict gate is
     re-running its agent each sweep; the cap bounds that spend."""
     return _scan_attempts(forge.comments(issue.number))[0]
-
-
-def count_today(forge: Forge, issue: Issue) -> int:
-    """Failed attempts today — the daily cap bounds runaway spend per issue
-    per day. Same comment history, same protocol as count()."""
-    return _scan_attempts(forge.comments(issue.number))[1]

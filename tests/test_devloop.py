@@ -99,8 +99,9 @@ def test_run_once_skips_issues_with_open_pr():
         def _issue(self, n, labels):
             return type("I", (), {"number": n, "title": f"t{n}", "body": "", "labels": labels})()
 
-        def open_pr_head_branches(self):
-            return ["devloop/issue-1"]
+        def open_devloop_prs(self):
+            from devloop.forge.base import OpenPR
+            return [OpenPR(1, "devloop/issue-1", [])]
 
         def rebase_branch(self, branch):
             return True
@@ -196,8 +197,9 @@ def test_queue_full_starts_nothing():
     from devloop.core import run_once
 
     class QueueForge(Forge):
-        def open_pr_head_branches(self):
-            return ["devloop/issue-9"]
+        def open_devloop_prs(self):
+            from devloop.forge.base import OpenPR
+            return [OpenPR(9, "devloop/issue-9", [])]
 
         def rebase_branch(self, branch):
             return True  # upkeep runs even when full — it frees the queue
@@ -286,22 +288,21 @@ def test_renamed_labels_route():
 
 class FlowForge(Forge):
     """FakeForge wired for the full process_issue flow: agent 'commits and
-    pushes' (commit_all True), open_pr recorded, branch_files/pr_files
-    overridable to stage conflict-gate scenarios."""
+    pushes' (commit_all True), open_pr recorded, branch_files and the
+    open_devloop_prs snapshot overridable to stage conflict-gate scenarios."""
 
-    def __init__(self, open_heads=(), pr_files=None):
+    def __init__(self, open_prs=()):
         self.prs = []
         self.notes = []
         self.cwds = []
         self.finished = []
-        self._open_heads = list(open_heads)
-        self._pr_files = pr_files or {}
+        self._open_prs = list(open_prs)
 
     def issues_with_labels(self, _l):
         return [Issue(n, f"t{n}", "", ["ai-fix"]) for n in (1, 2)]
 
-    def open_pr_head_branches(self):
-        return list(self._open_heads)
+    def open_devloop_prs(self):
+        return list(self._open_prs)
 
     def pr_for_branch(self, _b):
         return None
@@ -318,9 +319,6 @@ class FlowForge(Forge):
 
     def branch_files(self, _b):
         return ["lint.yml"]  # both builds touch the same file
-
-    def pr_files(self, n):
-        return self._pr_files.get(n, [])
 
     def open_pr(self, branch, title, body):
         self.prs.append(branch)
@@ -365,10 +363,9 @@ def test_conflict_gate_defers_overlapping_builds():
     import devloop.delivery as delivery
     from devloop import ledger
     from devloop.config import Config
-    from devloop.forge.base import Issue
+    from devloop.forge.base import Issue, OpenPR
 
-    forge = FlowForge(open_heads=["devloop/issue-2"], pr_files={77: ["lint.yml"]})
-    forge.pr_for_branch = lambda b: 77 if b == "devloop/issue-2" else None
+    forge = FlowForge(open_prs=[OpenPR(77, "devloop/issue-2", ["lint.yml"])])
     issue = Issue(1, "t1", "", ["ai-fix"])
 
     class R:
@@ -388,10 +385,9 @@ def test_conflict_gate_passes_disjoint_builds():
     is actually safe. Delivery interface, no full build run."""
     import devloop.delivery as delivery
     from devloop.config import Config
-    from devloop.forge.base import Issue
+    from devloop.forge.base import Issue, OpenPR
 
-    forge = FlowForge(open_heads=["devloop/issue-2"], pr_files={77: ["other.py"]})
-    forge.pr_for_branch = lambda b: 77 if b == "devloop/issue-2" else None
+    forge = FlowForge(open_prs=[OpenPR(77, "devloop/issue-2", ["other.py"])])
     forge.branch_files = lambda b: ["lint.yml"]
     issue = Issue(1, "t1", "", ["ai-fix"])
 
@@ -593,7 +589,7 @@ def test_braced_issue_body_and_cleanup_on_failure():
         def comments(self, n): return [Comment("x", b) for b in self.notes]
         def commit_all(self, msg, workdir): return True
         def pr_for_branch(self, b): return None
-        def open_pr_head_branches(self): return []
+        def open_devloop_prs(self): return []
         def branch_files(self, b): return []
         def open_pr(self, branch, title, body): self.prs.append(branch)
         def is_owner(self, a): return True
@@ -713,6 +709,10 @@ def test_rebase_stage_rebases_clean_and_rebuilds_conflicts():
             self.rebased = []
             self.closed = []
 
+        def open_devloop_prs(self):
+            from devloop.forge.base import OpenPR
+            return [OpenPR(77, "devloop/issue-9", [])]
+
         def rebase_branch(self, branch):
             self.rebased.append(branch)
             return not self.conflict
@@ -725,12 +725,12 @@ def test_rebase_stage_rebases_clean_and_rebuilds_conflicts():
 
     # clean rebase: silent, PR stays open
     f1 = RebaseForge(conflict=False)
-    core.rebase_stale(Config(repo="o/r"), f1, ["devloop/issue-9"])
+    core.rebase_stale(Config(repo="o/r"), f1)
     assert f1.rebased == ["devloop/issue-9"] and not f1.closed and not f1.notes
 
     # conflict: PR closed, issue told loudly, counts as an attempt
     f2 = RebaseForge(conflict=True)
-    core.rebase_stale(Config(repo="o/r"), f2, ["devloop/issue-9"])
+    core.rebase_stale(Config(repo="o/r"), f2)
     assert f2.closed == [77]
     assert any("rebase conflict" in n for _, n in f2.notes)
     from devloop import ledger
@@ -748,6 +748,10 @@ def test_rebase_branch_infra_error_skips_head():
         def __init__(self):
             self.closed = []
 
+        def open_devloop_prs(self):
+            from devloop.forge.base import OpenPR
+            return [OpenPR(77, "devloop/issue-9", [])]
+
         def rebase_branch(self, branch):
             raise RuntimeError("git failed: fatal: invalid reference: " + branch)
 
@@ -758,7 +762,7 @@ def test_rebase_branch_infra_error_skips_head():
             self.closed.append(n)
 
     f = BoomForge()
-    core.rebase_stale(Config(repo="o/r"), f, ["devloop/issue-9"])
+    core.rebase_stale(Config(repo="o/r"), f)
     assert f.closed == [] and f.notes == []  # nothing destroyed, nothing counted
 
 
@@ -848,7 +852,7 @@ def test_issue_scoped_runs_use_build_budget():
         def comments(self, n): return [Comment("x", b) for b in self.notes]
         def commit_all(self, msg, workdir): return True
         def pr_for_branch(self, b): return None
-        def open_pr_head_branches(self): return []
+        def open_devloop_prs(self): return []
         def is_owner(self, a): return True
         def is_maintainer(self, a): return True
         def is_collaborator(self, a): return True
@@ -912,7 +916,7 @@ def test_build_flow_uses_kind_runtime():
         def comments(self, n): return [Comment("x", b) for b in self.notes]
         def commit_all(self, msg, workdir): return True
         def pr_for_branch(self, b): return None
-        def open_pr_head_branches(self): return []
+        def open_devloop_prs(self): return []
         def is_owner(self, a): return True
         def is_maintainer(self, a): return True
         def is_collaborator(self, a): return True
@@ -1010,13 +1014,13 @@ def test_daily_budget_cap_blocks_runaway_issue():
     finally:
         core.process_issue = orig
 
-    # count_today counts only today's entries, ignores yesterday's
+    # budget() counts only today's entries for the daily cap, ignores yesterday's
     class CountForge:
         def comments(self, _n):
             return [Comment("x", f"{yesterday}\n\nagent run FAILED"),
                     Comment("x", f"{today}\n\nagent run FAILED")]
 
-    assert ledger.count_today(CountForge(), type("I", (), {"number": 1})()) == 1
+    assert ledger.budget(CountForge(), type("I", (), {"number": 1})())[1] == 1
 
 
 def test_github_adapter_carries_base_url_to_gh():
@@ -1119,6 +1123,53 @@ def test_runtime_output_keeps_stderr_off_success():
         rt.subprocess.run = real_run
 
 
+def test_queue_next_builds_selection_policy():
+    """Selection policy probed through the queue module's interface — no
+    agent, no driver: delivered-set skip, attempt cap, daily cap, and
+    slot-limited selection all read one Forge snapshot + one ledger scan."""
+    from devloop.queue import next_builds
+    from devloop.forge.base import OpenPR
+
+    class CapForge(FlowForge):
+        def __init__(self, attempts=(), open_prs=()):
+            super().__init__(open_prs=open_prs)
+            self._attempts = dict(attempts)  # issue number → failure count
+
+        def issues_with_labels(self, _l):
+            return [Issue(n, f"t{n}", "", ["ai-fix"]) for n in (1, 2, 3)]
+
+        def comments(self, number):
+            return [Comment("x", "agent run FAILED — x")] * self._attempts.get(number, 0)
+
+    cfg = Config(repo="o/r", pipeline=Pipeline(max_parallel=2, max_attempts=3))
+
+    # clean queue → issues in order, up to the slot budget
+    assert [i.number for i in next_builds(cfg, CapForge())] == [1, 2]
+
+    # delivered work never rebuilds: #2's PR is open → only #1 and #3, slot-bound
+    forge = CapForge(open_prs=[OpenPR(77, "devloop/issue-2", [])])
+    assert [i.number for i in next_builds(cfg, forge)] == [1]
+    assert [i.number for i in next_builds(
+        Config(repo="o/r", pipeline=Pipeline(max_parallel=3, max_attempts=3)), forge)] == [1, 3]
+
+    # attempt cap: #1 exhausted → skipped loudly, #2 still builds
+    forge = CapForge(attempts={1: 3})
+    assert [i.number for i in next_builds(cfg, forge)] == [2, 3]
+
+    # daily cap: #2 spent today's budget → #1 and #3 build
+    import datetime
+    from devloop import ledger
+    today = f"{ledger.DAY} {datetime.date.today().isoformat()}"
+
+    class DailyForge(CapForge):
+        def comments(self, number):
+            return [Comment("x", f"{today}\n\nagent run FAILED")] * self._attempts.get(number, 0)
+
+    forge = DailyForge(attempts={2: 2}, )
+    dcfg = Config(repo="o/r", pipeline=Pipeline(max_parallel=3, max_per_day=2))
+    assert [i.number for i in next_builds(dcfg, forge)] == [1, 3]
+
+
 def test_forge_conformance():
     """M2: one conformance suite, every adapter must pass. New adapters
     register a Harness in tests/conformance.ADAPTERS and get this for free."""
@@ -1157,6 +1208,7 @@ if __name__ == "__main__":
     test_rebase_stage_rebases_clean_and_rebuilds_conflicts()
     test_layered_settings_global_repo_merge()
     test_daily_budget_cap_blocks_runaway_issue()
+    test_queue_next_builds_selection_policy()
     test_github_adapter_carries_base_url_to_gh()
     test_version_bump()
     print("all checks passed")

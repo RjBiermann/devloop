@@ -1,8 +1,9 @@
 """Build orchestration: trigger → agent job → delivery → upkeep.
 
 The spec loop is devloop/spec.py; the review loop is devloop/review.py;
-the ledger protocol is devloop/ledger.py. This module owns only the
-build flow and the sweep that drives it."""
+the ledger protocol is devloop/ledger.py; build selection policy is
+devloop/queue.py. This module owns only the build flow and the sweep that
+drives it."""
 
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -11,6 +12,7 @@ from . import ledger
 from .config import Config
 from .delivery import Outcome, deliver
 from .forge import Forge, Issue
+from .queue import next_builds
 from .repair import repair_pr
 from .review import review_pr
 from .runtime import AgentRuntime
@@ -90,12 +92,13 @@ def process_issue(cfg: Config, forge: Forge, runtime: AgentRuntime, issue: Issue
         forge.finish_work(issue.number)
 
 
-def rebase_stale(cfg: Config, forge: Forge, devloop_heads: list[str]) -> None:
+def rebase_stale(cfg: Config, forge: Forge) -> None:
     """Pipeline upkeep, not human work: rebase open devloop PRs onto the
     current default branch (silently when clean). On conflict, close the PR
     and mark the issue for rebuild — main moved under the work, and redoing
     agent labor is cheaper than spending human conflict resolution."""
-    for head in devloop_heads:
+    for pr in forge.open_devloop_prs():
+        head = pr.head
         try:
             n = int(head.rsplit("-", 1)[-1])
         except ValueError:
@@ -175,44 +178,9 @@ def handle_merge(cfg: Config, forge: Forge, pr_number: int, head_branch: str) ->
 
 
 def run_once(cfg: Config, forge: Forge, runtime: AgentRuntime) -> list[Outcome]:
-    open_heads = forge.open_pr_head_branches()
-    devloop_heads = [h for h in open_heads if h.startswith("devloop/")]
     # Upkeep before slot math: rebase stale PRs; a conflict-closed PR frees a slot.
-    if devloop_heads:
-        rebase_stale(cfg, forge, devloop_heads)
-        open_heads = forge.open_pr_head_branches()
-        devloop_heads = [h for h in open_heads if h.startswith("devloop/")]
-    slots = cfg.pipeline.max_parallel - len(devloop_heads)
-    # Two layers of conflict prevention:
-    #   1. skip issues that already have a devloop PR — never rebuild delivered work
-    #   2. never exceed max_parallel in-flight builds; builds themselves get a
-    #      per-PR conflict gate at delivery (files overlapping an open devloop
-    #      PR defer instead of opening a conflicting PR)
-    if slots <= 0:
-        # Queue full — say so, loudly. Silent green no-ops are the worst
-        # failure mode a pipeline can have (the human believes it ran).
-        print(f"queue full: {len(devloop_heads)} build(s) in flight "
-              f"({', '.join(devloop_heads)}); nothing started — "
-              "merge/close the open devloop PR(s) or raise pipeline.max_parallel",
-              file=sys.stderr)
-        return []
-    delivered = set(open_heads)
-    candidates = []
-    for issue in forge.issues_with_labels(cfg.labels.triggers):
-        if f"devloop/issue-{issue.number}" in delivered:
-            continue
-        if ledger.count(forge, issue) >= cfg.pipeline.max_attempts:
-            print(f"#{issue.number}: {ledger.count(forge, issue)} failed attempts — "
-                  "skipped; re-label to retry", file=sys.stderr)
-            continue
-        if cfg.pipeline.max_per_day and \
-                ledger.count_today(forge, issue) >= cfg.pipeline.max_per_day:
-            print(f"#{issue.number}: daily cap reached ({cfg.pipeline.max_per_day}) — "
-                  "skipped until tomorrow", file=sys.stderr)
-            continue
-        candidates.append(issue)
-        if len(candidates) >= slots:
-            break
+    rebase_stale(cfg, forge)
+    candidates = next_builds(cfg, forge)
     if not candidates:
         return []
 
@@ -226,7 +194,7 @@ def run_once(cfg: Config, forge: Forge, runtime: AgentRuntime) -> list[Outcome]:
             return Outcome(issue.number, f"devloop/issue-{issue.number}", False, False)
 
     out: list[Outcome] = []
-    with ThreadPoolExecutor(max_workers=slots) as pool:
+    with ThreadPoolExecutor(max_workers=len(candidates)) as pool:
         for r in pool.map(worker, candidates):
             out.append(r)
     return out
