@@ -394,7 +394,7 @@ def test_conflict_gate_passes_disjoint_builds():
     class R:
         name = "fake"
 
-    out = delivery.deliver(Config(repo="o/r"), forge, R(), issue,
+    out = delivery.deliver(Config(repo="o/r"), forge, R().name, issue,
                            "devloop/issue-1", ".", "done")
     assert forge.prs == ["devloop/issue-1"]
 
@@ -1326,3 +1326,45 @@ def test_git_identity_guard():
         assert subprocess.run(["git", "config", "user.email"], cwd=co,
                               capture_output=True, text=True).stdout.strip() \
             == "human@repo"
+
+
+def test_verify_gate_one_policy():
+    """The gate module owns the verify policy: PASS/FAIL semantics and the
+    timeout — a hung gate is a FAIL, not a wedge. Both callers (delivery,
+    repair) gate through this one interface."""
+    from devloop.gate import run_gate
+
+    assert run_gate("true", ".", 10) is True
+    assert run_gate("exit 1", ".", 10) is False
+    # the latent hang: a gate that never returns is a FAIL, not a blocked
+    # build thread — this is why the policy lives in one place
+    assert run_gate("sleep 2", ".", timeout=1) is False
+
+
+def test_branch_naming_one_owner():
+    """The devloop branch convention is owned by the Forge interface:
+    build and parse in one place, inherited by every adapter and fake —
+    callers never touch the string."""
+    from devloop.forge.base import Forge
+
+    f = Forge()
+    assert f.branch_for(7) == "devloop/issue-7"
+    assert f.issue_of_branch("devloop/issue-7") == 7
+    assert f.issue_of_branch("feature/x") is None          # stranger's branch
+    assert f.issue_of_branch("devloop/issue-") is None     # malformed
+    assert f.issue_of_branch("devloop/issue-x") is None    # unparseable
+
+
+def test_rounds_dialect_shared():
+    """The review/repair round dialect: LGTM verdict parsing, thread
+    formatting, and repo-guidance loading exist once, in rounds.py."""
+    from devloop.forge.base import Comment
+    from devloop.rounds import is_lgtm, thread_lines, with_repo_guidance
+
+    assert is_lgtm("all good\nLGTM") is True
+    assert is_lgtm("LGTM was mentioned earlier\nP1: still broken") is False
+    assert thread_lines([Comment("ann", "already fixed"),
+                         Comment("bob", "  out of scope  ")]) == \
+        ["- ann: already fixed", "- bob: out of scope"]
+    base = with_repo_guidance("BASE", "/nonexistent/skill.md", "X")
+    assert base == "BASE"  # missing guidance file leaves the prompt alone

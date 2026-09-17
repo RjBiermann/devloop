@@ -48,7 +48,7 @@ def process_issue(cfg: Config, forge: Forge, runtime: AgentRuntime, issue: Issue
     even when the run explodes. workdir=None means the Forge allocates
     its own checkout; callers never name paths."""
     kind = cfg.kind_for(issue.labels)  # raises if triggers are not exclusive
-    branch = f"devloop/issue-{issue.number}"
+    branch = forge.branch_for(issue.number)
     # per-kind runtime override: [runtime.<kind>] full argv wins for this
     # build; no section configured → the caller's global runtime
     agent = cfg.runtime.for_kind(kind) or runtime
@@ -80,7 +80,7 @@ def process_issue(cfg: Config, forge: Forge, runtime: AgentRuntime, issue: Issue
             # error tail goes to the issue for the human, the branch stays local.
             ledger.failure(forge, issue, "agent", note="no PR opened", tail=res.output)
             return Outcome(issue.number, branch, False)
-        out = deliver(cfg, forge, runtime, issue, branch, workdir, res.output)
+        out = deliver(cfg, forge, runtime.name, issue, branch, workdir, res.output)
         if out.pr:
             findings = review_pr(cfg, forge, runtime, out.pr, branch,
                                  issue_title=issue.title, issue_body=issue.body)
@@ -99,9 +99,8 @@ def rebase_stale(cfg: Config, forge: Forge) -> None:
     agent labor is cheaper than spending human conflict resolution."""
     for pr in forge.open_devloop_prs():
         head = pr.head
-        try:
-            n = int(head.rsplit("-", 1)[-1])
-        except ValueError:
+        n = forge.issue_of_branch(head)
+        if n is None:
             continue
         try:
             clean = forge.rebase_branch(head)
@@ -144,7 +143,7 @@ def handle_command(cfg: Config, forge: Forge, runtime: AgentRuntime,
             return f"reviewed PR #{pr}"
         if cmd == "/retry":
             n = int(arg) if arg else context_number
-            existing = forge.pr_for_branch(f"devloop/issue-{n}")
+            existing = forge.pr_for_branch(forge.branch_for(n))
             if existing:
                 # the human sanctioned discarding the delivery — devloop is
                 # executing that command, not judging the work itself
@@ -166,11 +165,8 @@ def handle_merge(cfg: Config, forge: Forge, pr_number: int, head_branch: str) ->
     issue. Same carve-out as close_pr — the merge IS the human's sanction;
     this fires only from a real forge merge event, never agent output.
     None = not a devloop PR (caller's YAML gate should already know)."""
-    if not head_branch.startswith("devloop/issue-"):
-        return None
-    try:
-        n = int(head_branch.rsplit("-", 1)[-1])
-    except ValueError:
+    n = forge.issue_of_branch(head_branch)
+    if n is None:
         return None
     ledger.merged(forge, n, pr_number)
     forge.complete_issue(n)
@@ -191,7 +187,7 @@ def run_once(cfg: Config, forge: Forge, runtime: AgentRuntime) -> list[Outcome]:
             # One broken issue must not block the queue (head-of-line blocking
             # would retry it forever in watch mode and starve everything else).
             print(f"#{issue.number}: failed: {e}", file=sys.stderr)
-            return Outcome(issue.number, f"devloop/issue-{issue.number}", False, False)
+            return Outcome(issue.number, forge.branch_for(issue.number), False, False)
 
     out: list[Outcome] = []
     with ThreadPoolExecutor(max_workers=len(candidates)) as pool:

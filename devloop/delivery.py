@@ -1,20 +1,20 @@
 """Delivery: gate the work, ship it as a PR, or tell the issue why not.
 
 One interface function: deliver(). Every rule about how finished agent work
-becomes a PR — the verify gate, commit, half-delivery heal, the delivery
-conflict gate, self-delivery bookkeeping, the PR body — lives behind it.
-Never raises: every failure path posts its own ledger comment and returns
-an Outcome, so a silent delivery failure is a bug in one place, not a
-forgotten except clause in a caller.
+becomes a PR — the verify gate (owned by devloop/gate.py), commit,
+half-delivery heal, the delivery conflict gate, self-delivery bookkeeping,
+the PR body — lives behind it. Never raises: every failure path posts its
+own ledger comment and returns an Outcome, so a silent delivery failure is
+a bug in one place, not a forgotten except clause in a caller.
 """
 
-import subprocess
 from dataclasses import dataclass
 
 from . import ledger
 from .config import Config
 from .forge import Forge, Issue
-from .runtime import TAIL, AgentRuntime
+from .gate import run_gate
+from .runtime import TAIL
 
 
 @dataclass
@@ -26,24 +26,23 @@ class Outcome:
     pr: int | None = None  # None = nothing shipped (failed, empty, or deferred)
 
 
-def deliver(cfg: Config, forge: Forge, runtime: AgentRuntime, issue: Issue,
+def deliver(cfg: Config, forge: Forge, agent_name: str, issue: Issue,
             branch: str, workdir: str, agent_output: str) -> Outcome:
     """Ship one finished agent run. The agent already succeeded (res.ok);
     everything from here to PR-or-ledger-comment is delivery."""
     kind = cfg.kind_for(issue.labels)
     gate_ok = True
+    if cfg.pipeline.verify:
+        # runs in the build's worktree — the gate judges what will be
+        # delivered, not the (possibly older) default checkout; the gate
+        # module owns the policy (timeout, PASS semantics)
+        gate_ok = run_gate(cfg.pipeline.verify, workdir, cfg.pipeline.timeout)
     try:
-        if cfg.pipeline.verify:
-            # runs in the build's worktree — the gate judges what will be
-            # delivered, not the (possibly older) default checkout
-            r = subprocess.run(cfg.pipeline.verify, shell=True,
-                               capture_output=True, text=True, cwd=workdir)
-            gate_ok = r.returncode == 0
         existing = forge.pr_for_branch(branch)
         # half-delivery rule lives behind the Forge seam: commit_all returns
         # True for staged, unpushed, or already-pushed-but-no-PR work.
         delivered = forge.commit_all(
-            f"devloop({kind}): fixes #{issue.number} [agent: {runtime.name}]", workdir)
+            f"devloop({kind}): fixes #{issue.number} [agent: {agent_name}]", workdir)
         if not existing and not delivered:
             # No diff AND no PR — nothing delivered. The agent said something —
             # that's the finding (question, verdict, or stall); surface it.
@@ -79,7 +78,7 @@ def deliver(cfg: Config, forge: Forge, runtime: AgentRuntime, issue: Issue,
                 title=f"devloop({kind}): {issue.title} (#{issue.number})",
                 body=(
                     f"Closes #{issue.number}\n\n"
-                    f"- agent: `{runtime.name}`\n"
+                    f"- agent: `{agent_name}`\n"
                     f"- gate: {'PASS' if gate_ok else 'FAIL'}"
                     + (f" (`{cfg.pipeline.verify}`)" if cfg.pipeline.verify else " (none configured)")
                     + "\n\nHuman merge required — agents never merge."

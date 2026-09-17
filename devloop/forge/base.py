@@ -32,6 +32,25 @@ class Forge:
     """Adapter for one git forge. Subclasses implement the primitives;
     guardrails are enforced here in the base so no adapter can forget."""
 
+    # --- devloop branch naming: one owner. The prefix is load-bearing
+    # (the workflow template filters on `devloop/`), so it lives behind the
+    # Forge interface as concrete methods — the convention is identical
+    # across adapters, and fake test adapters inherit it for free.
+    BRANCH_PREFIX = "devloop/issue-"
+
+    def branch_for(self, number: int) -> str:
+        return f"{self.BRANCH_PREFIX}{number}"
+
+    def issue_of_branch(self, branch: str) -> int | None:
+        """The issue a devloop branch carries, or None (not devloop-owned,
+        or not parseable)."""
+        if not branch.startswith(self.BRANCH_PREFIX):
+            return None
+        try:
+            return int(branch[len(self.BRANCH_PREFIX):])
+        except ValueError:
+            return None
+
     # --- read side -------------------------------------------------------
     def issues_with_labels(self, labels: list[str]) -> list[Issue]:
         raise NotImplementedError

@@ -12,10 +12,10 @@ to repair.
 """
 
 import re
-from pathlib import Path
 
 from .config import Config
 from .forge import Forge
+from .rounds import DIFF_CAP, is_lgtm, thread_block, thread_lines, with_repo_guidance
 from .runtime import TAIL, AgentRuntime
 
 REVIEW_PROMPT = (
@@ -36,8 +36,8 @@ def review_prompt(cfg: Config, issue_title: str = "", issue_body: str = "") -> s
     guidance from skills/pre-review/SKILL.md (the customization point) +
     the spec issue. Substitution is replace-based, not .format — injected
     content (issue bodies, diffs) may contain braces."""
-    p = Path("skills/pre-review/SKILL.md")
-    prompt = REVIEW_PROMPT + "\n\n## Repo-specific review guidance\n" + p.read_text() if p.exists() else REVIEW_PROMPT
+    prompt = with_repo_guidance(REVIEW_PROMPT, "skills/pre-review/SKILL.md",
+                                "Repo-specific review guidance")
     return (prompt
             .replace("{issue_title}", issue_title)
             .replace("{issue_body}", issue_body))
@@ -61,16 +61,14 @@ def review_pr(cfg: Config, forge: Forge, runtime: AgentRuntime, pr_number: int,
     prompt = review_prompt(cfg, issue_title, issue_body)
     # the reviewer reads the PR thread once at the start — human replies
     # ("already fixed elsewhere", "out of scope") must not be ignored
-    thread = [f"- {c.author}: {c.body.strip()[:500]}"
-              for c in forge.pr_comments(pr_number)]
+    thread = thread_lines(forge.pr_comments(pr_number))
     prior: list[str] = []
     for rnd in range(1, cfg.pipeline.review_rounds + 1):
         # diff straight from the forge — GitHub computes it authoritatively;
         # local origin/HEAD-based diffs proved unreliable mid-build
         diff = forge.pr_diff_by_number(pr_number)
-        round_prompt = prompt.replace("{diff}", diff[:40000])
-        if thread:
-            round_prompt += "\n\n## The PR thread so far\n" + "\n".join(thread)
+        round_prompt = prompt.replace("{diff}", diff[:DIFF_CAP])
+        round_prompt += thread_block(thread)
         if prior:
             # rounds are isolated sessions — carry the prior findings in, so
             # round N verifies/extends rather than repeats round 1
@@ -84,6 +82,6 @@ def review_pr(cfg: Config, forge: Forge, runtime: AgentRuntime, pr_number: int,
         prior.append(res.output.strip())
         forge.pr_comment(pr_number, f"**AI pre-review, round {rnd}/{cfg.pipeline.review_rounds}**\n\n"
                                  + res.output.strip()[-TAIL:])
-        if "LGTM" in res.output[-200:].upper():
+        if is_lgtm(res.output):
             return ""
     return prior[-1]

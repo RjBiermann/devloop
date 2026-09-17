@@ -35,7 +35,7 @@ def next_builds(cfg: Config, forge: Forge) -> list[Issue]:
     delivered = {p.head for p in prs}
     candidates = []
     for issue in forge.issues_with_labels(cfg.labels.triggers):
-        if f"devloop/issue-{issue.number}" in delivered:
+        if forge.branch_for(issue.number) in delivered:
             continue
         attempts, today = ledger.budget(forge, issue)
         if attempts >= cfg.pipeline.max_attempts:

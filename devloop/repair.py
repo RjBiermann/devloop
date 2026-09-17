@@ -9,11 +9,10 @@ findings-only. Repair is not delivery — it never opens a PR and never
 merges; it only pushes commits to the PR branch that already exists.
 """
 
-import subprocess
-from pathlib import Path
-
 from .config import Config
 from .forge import Forge
+from .gate import run_gate
+from .rounds import DIFF_CAP, is_lgtm, thread_block, thread_lines, with_repo_guidance
 from .runtime import TAIL, AgentRuntime
 
 REPAIR_PROMPT = (
@@ -42,10 +41,6 @@ VERIFY_PROMPT = (
 )
 
 
-def _lgtm(output: str) -> bool:
-    return "LGTM" in output[-200:].upper()
-
-
 def repair_pr(cfg: Config, forge: Forge, runtime: AgentRuntime, pr_number: int,
               branch: str, workdir: str, issue_title: str, issue_body: str,
               findings: str) -> str:
@@ -53,34 +48,31 @@ def repair_pr(cfg: Config, forge: Forge, runtime: AgentRuntime, pr_number: int,
     run → verify gate → push → one verification review round. Returns the
     unresolved findings ("" when verification LGTMs). Never opens, closes,
     or merges a PR — the PR already exists; humans own those buttons."""
-    p = Path("skills/repair/SKILL.md")
-    prompt = REPAIR_PROMPT + "\n\n## Repo-specific repair guidance\n" + p.read_text() if p.exists() else REPAIR_PROMPT
+    prompt = with_repo_guidance(REPAIR_PROMPT, "skills/repair/SKILL.md",
+                                "Repo-specific repair guidance")
     prompt = (prompt
               .replace("{issue_title}", issue_title)
               .replace("{issue_body}", issue_body))
-    thread = [f"- {c.author}: {c.body.strip()[:500]}"
-              for c in forge.pr_comments(pr_number)]
+    thread = thread_lines(forge.pr_comments(pr_number))
     for rnd in range(1, cfg.pipeline.repair_rounds + 1):
         # fresh diff every round — the fixer and verifier must judge what
         # is on the branch now, not what review round 1 saw
         diff = forge.pr_diff_by_number(pr_number)
         round_prompt = (prompt
                         .replace("{findings}", findings)
-                        .replace("{diff}", diff[:40000]))
-        if thread:
-            round_prompt += "\n\n## The PR thread so far\n" + "\n".join(thread)
+                        .replace("{diff}", diff[:DIFF_CAP]))
+        round_prompt += thread_block(thread)
         res = runtime.run(round_prompt, cwd=workdir, timeout=cfg.pipeline.timeout)
         if not res.ok:
             forge.pr_comment(pr_number, f"AI repair round {rnd}: fixer run failed.")
             return findings
         forge.pr_comment(pr_number, f"**AI repair, round {rnd}/{cfg.pipeline.repair_rounds}**\n\n"
                                  + res.output.strip()[-TAIL:])
-        # gate before push — a repair that pushes failing code is worse
-        # than no repair; the finding stays open for the human instead
         if cfg.pipeline.verify:
-            gate = subprocess.run(cfg.pipeline.verify, shell=True,
-                                  capture_output=True, text=True, cwd=workdir)
-            if gate.returncode != 0:
+            # gate before push — the gate module owns the policy; a repair
+            # that pushes failing code is worse than no repair, the finding
+            # stays open for the human instead
+            if not run_gate(cfg.pipeline.verify, workdir, cfg.pipeline.timeout):
                 forge.pr_comment(pr_number,
                                  f"AI repair round {rnd}: verify gate FAILED — "
                                  "fix not pushed, findings remain open.")
@@ -91,12 +83,12 @@ def repair_pr(cfg: Config, forge: Forge, runtime: AgentRuntime, pr_number: int,
         # diff re-fetched AFTER the fixer — the verifier judges what is
         # now on the branch, not the diff the fixer was handed
         vres = runtime.run(VERIFY_PROMPT.replace("{findings}", findings)
-                                     .replace("{diff}", forge.pr_diff_by_number(pr_number)[:40000]),
+                                     .replace("{diff}", forge.pr_diff_by_number(pr_number)[:DIFF_CAP]),
                            cwd=workdir, timeout=cfg.pipeline.timeout)
         if vres.ok:
             forge.pr_comment(pr_number, f"**AI verify after repair {rnd}**\n\n"
                                      + vres.output.strip()[-TAIL:])
-            if _lgtm(vres.output):
+            if is_lgtm(vres.output):
                 return ""
         findings = vres.output.strip() if vres.ok else findings
     forge.pr_comment(pr_number,
