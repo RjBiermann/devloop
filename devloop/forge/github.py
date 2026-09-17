@@ -125,6 +125,12 @@ class GitHub(Forge):
         # not <branch>) — 'invalid reference' otherwise
         _run(["git", "worktree", "add", "--detach", wt, f"origin/{branch}"])
         _ensure_identity(wt)
+        # the pre-rebase tip is the lease: the branch we just rebased FROM.
+        # The default --force-with-lease reads origin/<branch>, but on a
+        # single-branch CI checkout the remote's fetch refspec doesn't cover
+        # <branch>, so git rejects the bare form as 'stale info' even when
+        # the tracking ref matches — pin the lease explicitly instead.
+        base_sha = _run(["git", "rev-parse", f"origin/{branch}"], cwd=wt).strip()
         try:
             r = subprocess.run(["git", "rebase", default], cwd=wt,
                                capture_output=True, text=True)
@@ -137,7 +143,8 @@ class GitHub(Forge):
             # entry — even a stale one — still names the branch)
             sha = _run(["git", "rev-parse", "HEAD"], cwd=wt).strip()
             _run(["git", "update-ref", f"refs/heads/{branch}", sha], cwd=wt)
-            _run(["git", "push", "--force-with-lease", "origin", branch], cwd=wt)
+            _run(["git", "push", f"--force-with-lease={branch}:{base_sha}",
+                  "origin", branch], cwd=wt)
             return True
         finally:
             shutil.rmtree(os.path.dirname(wt), ignore_errors=True)

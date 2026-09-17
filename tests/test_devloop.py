@@ -746,6 +746,7 @@ def test_rebase_branch_infra_error_skips_head():
 
     class BoomForge(FlowForge):
         def __init__(self):
+            super().__init__()
             self.closed = []
 
         def open_devloop_prs(self):
@@ -794,12 +795,19 @@ def test_rebase_branch_real_git_resolves_remote_pr_head():
         g("add", "-A", cwd=seed)
         g("commit", "-m", "one", cwd=seed)
         g("push", "origin", "main", cwd=seed)
-        g("branch", "devloop/issue-9", cwd=seed)
+        g("checkout", "-b", "devloop/issue-9", cwd=seed)
+        with open(seed + "/pr.txt", "w") as fh:
+            fh.write("pr work\n")
+        g("add", "-A", cwd=seed)
+        g("commit", "-m", "two", cwd=seed)
         g("push", "origin", "devloop/issue-9", cwd=seed)
 
-        # fresh CI-style checkout of main only — no local devloop ref
+        # fresh CI-style checkout of main only — no local devloop ref, but
+        # the remote-tracking ref exists (what fetch of all branches leaves)
         co = tmp + "/co"
         g("clone", "--single-branch", "--branch", "main", remote, "co", cwd=tmp)
+        g("fetch", "origin", "devloop/issue-9:refs/remotes/origin/devloop/issue-9",
+          cwd=co)
         g("config", "user.email", "t@t", cwd=co)
         g("config", "user.name", "t", cwd=co)
         g("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main", cwd=co)
@@ -825,7 +833,7 @@ def test_rebase_branch_real_git_resolves_remote_pr_head():
         tip = subprocess.run(
             ["git", "log", "--format=%s", "origin/main..origin/devloop/issue-9"],
             cwd=seed, capture_output=True, text=True).stdout
-        assert "one" in tip  # PR commit survived the rebase
+        assert "two" in tip  # the PR's unique commit survived the rebase
         ancestor = subprocess.run(
             ["git", "merge-base", "--is-ancestor", "origin/main", "origin/devloop/issue-9"],
             cwd=seed, capture_output=True)
@@ -915,8 +923,10 @@ def test_build_flow_uses_kind_runtime():
         def comment(self, n, body): self.notes.append(body)
         def comments(self, n): return [Comment("x", b) for b in self.notes]
         def commit_all(self, msg, workdir): return True
-        def pr_for_branch(self, b): return None
+        def pr_for_branch(self, b): return 55 if b in self.prs else None
         def open_devloop_prs(self): return []
+        def branch_files(self, b): return set()
+        def open_pr(self, branch, title, body): self.prs.append(branch)
         def is_owner(self, a): return True
         def is_maintainer(self, a): return True
         def is_collaborator(self, a): return True
@@ -926,14 +936,31 @@ def test_build_flow_uses_kind_runtime():
         def run(self, prompt, cwd, timeout):
             raise AssertionError("global runtime must not run a kind override")
 
-    cfg = Config(repo="o/r",
-                 runtime=Runtime(kind_argv={"fix": ["kindagent", "run"]}),
-                 pipeline=Pipeline(review_rounds=0))
-    f = F()
-    out = core.process_issue(cfg, f, R(), Issue(7, "t7", "b", ["ai-fix"]))
+    # the override is a real argv → a real stub binary named kindagent on
+    # PATH, so the run succeeds without any agent CLI installed
+    import os
+    import stat
+    import tempfile
+    with tempfile.TemporaryDirectory() as bin_d, \
+            tempfile.TemporaryDirectory() as wt_d:
+        stub = bin_d + "/kindagent"
+        with open(stub, "w") as fh:
+            fh.write("#!/bin/sh\nexit 0\n")
+        os.chmod(stub, os.stat(stub).st_mode | stat.S_IEXEC)
+        old_path = os.environ["PATH"]
+        os.environ["PATH"] = bin_d + os.pathsep + old_path
+        f = F()
+        f.start_work = lambda n, branch: wt_d
+        try:
+            cfg = Config(repo="o/r",
+                         runtime=Runtime(kind_argv={"fix": ["kindagent", "run"]}),
+                         pipeline=Pipeline(review_rounds=0))
+            out = core.process_issue(cfg, f, R(), Issue(7, "t7", "b", ["ai-fix"]))
+        finally:
+            os.environ["PATH"] = old_path
     assert f.prs == ["devloop/issue-7"]              # override ran, not R
     assert "agent `kindagent`" in f.notes[0]          # heartbeat names it
-    assert out.pr == "devloop/issue-7"
+    assert out.pr == 55                              # PR bookkeeping via pr_for_branch
 
 
 def test_layered_settings_global_repo_merge():
@@ -1180,41 +1207,6 @@ def test_forge_conformance():
     assert not failures, "conformance failures:\n" + "\n".join(failures)
 
 
-if __name__ == "__main__":
-    test_human_only_ops_are_blocked()
-    test_spec_state_machine()
-    test_runtime_denylists_bind_agent_shell()
-    test_runtime_output_keeps_stderr_off_success()
-    test_forge_conformance()
-    test_spec_never_reprocesses_finalized()
-    test_run_once_skips_issues_with_open_pr()
-    test_queue_full_starts_nothing()
-    test_skillcheck_warns_and_never_blocks()
-    test_trigger_authority_defaults_and_overrides()
-    test_access_mode_typo_fails_loudly()
-    test_trigger_labels_are_mutually_exclusive()
-    test_renamed_labels_route()
-    test_config_version_guard()
-    test_parallel_builds_get_distinct_worktrees()
-    test_conflict_gate_defers_overlapping_builds()
-    test_conflict_gate_passes_disjoint_builds()
-    test_failure_budget_resets_on_retry()
-    test_ledger_producer_and_parser_agree()
-    test_review_rounds_carry_prior_findings()
-    test_repair_pushes_gates_and_verifies()
-    test_build_flow_hands_review_findings_to_repair()
-    test_braced_issue_body_and_cleanup_on_failure()
-    test_comment_commands()
-    test_rebase_stage_rebases_clean_and_rebuilds_conflicts()
-    test_layered_settings_global_repo_merge()
-    test_daily_budget_cap_blocks_runaway_issue()
-    test_queue_next_builds_selection_policy()
-    test_github_adapter_carries_base_url_to_gh()
-    test_version_bump()
-    print("all checks passed")
-
-
-
 def test_merged_pr_completes_issue():
     """A human-merged devloop PR closes its issue — executing the human's
     merge sanction (same carve-out as close_pr), on the ledger record."""
@@ -1263,7 +1255,52 @@ def test_merged_pr_completes_issue():
                     Comment("x", "agent run FAILED — boom")]
 
     from devloop import ledger
-    assert ledger.count(LF(), 9) == 1  # merge ≠ an attempt; the failure is
+    from devloop.forge.base import Issue
+    assert ledger.count(LF(), Issue(9, "t", "b")) == 1  # merge ≠ an attempt; the failure is
+
+
+def test_merged_cli_glue():
+    """cmd_merged must survive its own wiring: the unpack target once shadowed
+    the _runtime function (UnboundLocalError) and _event was called with a
+    nonexistent name (NameError) — both crash closeout before the forge call."""
+    import argparse
+    import json
+    import tempfile
+    import unittest.mock as mock
+
+    import devloop.cli as cli
+    from devloop.forge.base import Forge
+
+    class F(Forge):
+        def comment(self, *a):
+            pass
+
+        def complete_issue(self, n):
+            self.completed = n
+
+    forge = F()
+    with mock.patch.object(cli, "load",
+                           return_value=type("C", (), {"repo": "o/r"})()), \
+            mock.patch.object(cli, "_runtime", return_value=(forge, None)):
+        with tempfile.TemporaryDirectory() as tmp:
+            ev = tmp + "/ev.json"
+            env = mock.patch.dict(cli.os.environ, {"GITHUB_EVENT_PATH": ev})
+            args = argparse.Namespace(event=ev)
+            # not merged → silent; no forge call either way
+            Path(ev).write_text(json.dumps(
+                {"pull_request": {"merged": False, "number": 55,
+                                  "head": {"ref": "devloop/issue-9"}}}))
+            with env:
+                cli.cmd_merged(args)
+            assert not hasattr(forge, "completed")
+
+            # merged: closeout fires — the bugs above died before this line
+            Path(ev).write_text(json.dumps(
+                {"pull_request": {"merged": True, "number": 55,
+                                  "head": {"ref": "devloop/issue-9"}}}))
+            with env:
+                cli.cmd_merged(args)
+        assert forge.completed == 9
 
 
 def test_git_identity_guard():
@@ -1279,6 +1316,10 @@ def test_git_identity_guard():
         subprocess.run(["git", *args], cwd=cwd, check=True,
                        capture_output=True)
 
+    # dev machines carry a global git identity — CI checkouts don't. Isolate
+    # the test from both so the CI-like "no identity" precondition holds.
+    os.environ["GIT_CONFIG_GLOBAL"] = "/dev/null"
+    os.environ["GIT_CONFIG_SYSTEM"] = "/dev/null"
     with tempfile.TemporaryDirectory() as tmp:
         remote = tmp + "/remote.git"
         subprocess.run(["git", "init", "--bare", "-b", "main", remote],
@@ -1364,7 +1405,8 @@ def test_rounds_dialect_shared():
     from devloop.rounds import is_lgtm, run_round, thread_lines, with_repo_guidance
 
     assert is_lgtm("all good\nLGTM") is True
-    assert is_lgtm("LGTM was mentioned earlier\nP1: still broken") is False
+    # verdict lives at the tail: LGTM older than the 200-char tail window is not a verdict
+    assert is_lgtm("LGTM was mentioned earlier\n" + "x" * 220 + "\nP1: still broken") is False
     assert thread_lines([Comment("ann", "already fixed"),
                          Comment("bob", "  out of scope  ")]) == \
         ["- ann: already fixed", "- bob: out of scope"]
@@ -1414,3 +1456,12 @@ def test_rounds_dialect_shared():
     notes.clear()
     assert run_round(RoundForge(), Boom(), 55, "repair", "x", 1, 1, ".", 60) is None
     assert "AI repair round 1: run failed" in notes[-1]
+
+
+if __name__ == "__main__":
+    # discover every test_* in this file — a test defined below the old
+    # explicit call list never ran, which is how cmd_merged shipped broken
+    for _name, _fn in sorted(globals().items()):
+        if _name.startswith("test_") and callable(_fn):
+            _fn()
+    print(f"all checks passed ({_name} last of many)")

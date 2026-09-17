@@ -115,14 +115,14 @@ def cmd_merged(_args: argparse.Namespace) -> None:
     """Close out an issue whose devloop PR a human just merged. Runs from
     CI's pull_request(closed, merged) event; silent exit otherwise (zero
     token spend — no agent run here, just forge calls)."""
-    ev = _event(args)
+    ev = _event(_args)
     if ev is None:
         return
     pr = ev.get("pull_request") or {}
     if not pr.get("merged"):
         return
     cfg = load()
-    forge, _runtime = _runtime(cfg)
+    forge, runtime = _runtime(cfg)
     out = handle_merge(cfg, forge, pr["number"], (pr.get("head") or {}).get("ref") or "")
     if out:
         print(f"merge result: {out}")

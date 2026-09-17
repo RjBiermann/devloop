@@ -55,7 +55,6 @@ def review_pr(cfg: Config, forge: Forge, runtime: AgentRuntime, pr_number: int,
         n = issue_of_body(forge.pr_body(pr_number))
         issue = forge.issue(n) if n else None
     issue_title, issue_body = (issue.title, issue.body) if issue else ("", "")
-    issue_title, issue_body = (issue.title, issue.body) if issue else ("", "")
     prompt = review_prompt(cfg, issue_title, issue_body)
     prior: list[str] = []
     for rnd in range(1, cfg.pipeline.review_rounds + 1):
@@ -75,4 +74,4 @@ def review_pr(cfg: Config, forge: Forge, runtime: AgentRuntime, pr_number: int,
         prior.append(res.output.strip())
         if is_lgtm(res.output):
             return ""
-    return prior[-1]
+    return prior[-1] if prior else ""  # review_rounds=0 = no AI pre-review
