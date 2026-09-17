@@ -1097,6 +1097,28 @@ def test_runtime_denylists_bind_agent_shell():
     rt.AgentRuntime(["pi", "--mode", "text"])  # constructor only; run() passes through
 
 
+def test_runtime_output_keeps_stderr_off_success():
+    """Agent stderr (install/progress noise) must not leak into the output
+    that becomes PR bodies and ledger tails. It joins only on failure."""
+    import devloop.runtime as rt
+
+    def fake_run(argv, **kw):
+        return type("R", (), {"returncode": code, "stdout": "report\n",
+                              "stderr": "Cloning into '/tmp/x'...\n"})()
+
+    real_run = rt.subprocess.run
+    rt.subprocess.run = fake_run
+    try:
+        code = 0
+        out = rt.AgentRuntime(["pi"]).run("do work", cwd=".", timeout=60)
+        assert out.ok and out.output == "report\n"
+        code = 1
+        out = rt.AgentRuntime(["pi"]).run("do work", cwd=".", timeout=60)
+        assert not out.ok and "report\n" in out.output and "Cloning into" in out.output
+    finally:
+        rt.subprocess.run = real_run
+
+
 def test_forge_conformance():
     """M2: one conformance suite, every adapter must pass. New adapters
     register a Harness in tests/conformance.ADAPTERS and get this for free."""
@@ -1111,6 +1133,7 @@ if __name__ == "__main__":
     test_human_only_ops_are_blocked()
     test_spec_state_machine()
     test_runtime_denylists_bind_agent_shell()
+    test_runtime_output_keeps_stderr_off_success()
     test_forge_conformance()
     test_spec_never_reprocesses_finalized()
     test_run_once_skips_issues_with_open_pr()

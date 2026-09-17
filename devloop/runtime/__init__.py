@@ -68,7 +68,13 @@ class AgentRuntime:
             [*self.argv, *deny_argv, prompt],
             cwd=cwd, capture_output=True, text=True, timeout=timeout, env=env,
         )
-        return RunResult(r.returncode == 0, (r.stdout + r.stderr)[-TAIL:])
+        # stdout is the agent's report; stderr is diagnostic noise (agent
+        # install/progress chatter) that must not leak into PR bodies —
+        # keep it only when the run failed, where it's the ledger's clue.
+        output = r.stdout
+        if r.returncode != 0:
+            output += r.stderr
+        return RunResult(r.returncode == 0, output[-TAIL:])
 
 
 def get_runtime(engine: str, argv: list[str] | None) -> AgentRuntime:
