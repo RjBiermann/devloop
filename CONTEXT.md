@@ -38,7 +38,9 @@ in `devloop/spec.py`).
 
 Turning a finished agent run into a PR — or telling the issue why not. The
 **delivery module** (`devloop/delivery.py`) owns this interface: one function,
-`deliver()`, behind which live the verify gate, commit, half-delivery heal,
+`deliver()`, behind which live the verify gate (owned by its own module,
+`devloop/gate.py` — one gate policy for every caller), commit,
+half-delivery heal,
 the delivery conflict gate, self-delivery bookkeeping, and the PR body. It
 never raises: every failure path posts its own ledger comment and returns an
 `Outcome` (`pr=None` means nothing shipped). A silent delivery failure is a
@@ -136,7 +138,8 @@ code. Review returns its final findings — the build flow hands them to Repair.
 Acting on review findings before a human reads them. The **repair module**
 (`devloop/repair.py`) owns this interface: one function, `repair_pr()`, behind
 which live the fixer prompt (findings + diff + spec issue + PR thread, with
-repo guidance from `skills/repair/SKILL.md`), the verify gate before any push,
+repo guidance from `skills/repair/SKILL.md`), the verify gate before any push
+(`devloop/gate.py`, same policy as delivery),
 the commit-and-push (the fixer commits, the pipeline pushes), and the
 one-round verification re-review that decides fixed vs still open. Repair is
 not Review — review finds, repair acts; review stays findings-only. Repair is

@@ -39,6 +39,16 @@ def _warn_bad_skills() -> None:
         print(f"warning: {w}", file=sys.stderr)
 
 
+def _event(args: argparse.Namespace) -> dict | None:
+    """Read the CI event payload ($GITHUB_EVENT_PATH or --event). None = not
+    a CI event context — the caller exits silently (zero token spend).
+    Handlers extract their own fields: command and merged events differ."""
+    path = args.event or os.environ.get("GITHUB_EVENT_PATH", "")
+    if not path or not Path(path).exists():
+        return None
+    return json.loads(Path(path).read_text())
+
+
 def _runtime(cfg):
     return get_forge(cfg.forge_kind, cfg.repo, cfg.base_url), get_runtime(cfg.runtime.engine, cfg.runtime.argv)
 
@@ -80,10 +90,9 @@ def cmd_command(_args: argparse.Namespace) -> None:
     """Execute one comment command. Runs from CI's issue_comment event:
     reads the event payload, access-gates the author, executes.
     Silent exit when the comment isn't a command (zero token spend)."""
-    path = _args.event or os.environ.get("GITHUB_EVENT_PATH", "")
-    if not path or not Path(path).exists():
-        return  # not a CI comment context — nothing to do
-    ev = json.loads(Path(path).read_text())
+    ev = _event(args)
+    if ev is None:
+        return
     comment = ev.get("comment") or {}
     body = (comment.get("body") or "").strip()
     if not body.startswith("/"):
@@ -106,10 +115,9 @@ def cmd_merged(_args: argparse.Namespace) -> None:
     """Close out an issue whose devloop PR a human just merged. Runs from
     CI's pull_request(closed, merged) event; silent exit otherwise (zero
     token spend — no agent run here, just forge calls)."""
-    path = _args.event or os.environ.get("GITHUB_EVENT_PATH", "")
-    if not path or not Path(path).exists():
+    ev = _event(args)
+    if ev is None:
         return
-    ev = json.loads(Path(path).read_text())
     pr = ev.get("pull_request") or {}
     if not pr.get("merged"):
         return

@@ -11,12 +11,11 @@ round's findings ("" on LGTM or failed run) — the build flow hands them
 to repair.
 """
 
-import re
-from pathlib import Path
-
 from .config import Config
-from .forge import Forge
-from .runtime import TAIL, AgentRuntime
+from .delivery import issue_of_body
+from .forge import Forge, Issue
+from .rounds import is_lgtm, run_round, with_repo_guidance
+from .runtime import AgentRuntime
 
 REVIEW_PROMPT = (
     "You are reviewing a pull request authored by another AI agent. Review "
@@ -36,8 +35,8 @@ def review_prompt(cfg: Config, issue_title: str = "", issue_body: str = "") -> s
     guidance from skills/pre-review/SKILL.md (the customization point) +
     the spec issue. Substitution is replace-based, not .format — injected
     content (issue bodies, diffs) may contain braces."""
-    p = Path("skills/pre-review/SKILL.md")
-    prompt = REVIEW_PROMPT + "\n\n## Repo-specific review guidance\n" + p.read_text() if p.exists() else REVIEW_PROMPT
+    prompt = with_repo_guidance(REVIEW_PROMPT, "skills/pre-review/SKILL.md",
+                                "Repo-specific review guidance")
     return (prompt
             .replace("{issue_title}", issue_title)
             .replace("{issue_body}", issue_body))
@@ -45,45 +44,35 @@ def review_prompt(cfg: Config, issue_title: str = "", issue_body: str = "") -> s
 
 
 def review_pr(cfg: Config, forge: Forge, runtime: AgentRuntime, pr_number: int,
-              branch: str = "", issue_title: str = "", issue_body: str = "") -> str:
+              issue: Issue | None = None) -> str:
     """AI pre-review rounds (pipeline.review_rounds) on one PR. Stops early
     on LGTM. Returns the last round's findings ("" on LGTM or failed run).
-    branch = head branch when known (build flow); empty = review-by-number
-    (`devloop review <pr>`), diff fetched from the forge.
-    issue_title/issue_body: the spec the diff is judged against (the builder
-    flow has it; review-by-number parses `Closes #N` from the PR body)."""
-    if not issue_title:
-        body = forge.pr_body(pr_number)
-        m = re.search(r"[Cc]loses #(\d+)", body)
-        if m:
-            it = forge.issue(int(m.group(1)))
-            issue_title, issue_body = it.title, it.body
+    issue = the spec the diff is judged against — the build flow has it;
+    None = review-by-number (`devloop review <pr>`), reconstructed from the
+    PR body's `Closes #N` marker (parsed by delivery, the format owner).
+    No marker on the body → review proceeds without spec context."""
+    if issue is None:
+        n = issue_of_body(forge.pr_body(pr_number))
+        issue = forge.issue(n) if n else None
+    issue_title, issue_body = (issue.title, issue.body) if issue else ("", "")
+    issue_title, issue_body = (issue.title, issue.body) if issue else ("", "")
     prompt = review_prompt(cfg, issue_title, issue_body)
-    # the reviewer reads the PR thread once at the start — human replies
-    # ("already fixed elsewhere", "out of scope") must not be ignored
-    thread = [f"- {c.author}: {c.body.strip()[:500]}"
-              for c in forge.pr_comments(pr_number)]
     prior: list[str] = []
     for rnd in range(1, cfg.pipeline.review_rounds + 1):
-        # diff straight from the forge — GitHub computes it authoritatively;
-        # local origin/HEAD-based diffs proved unreliable mid-build
-        diff = forge.pr_diff_by_number(pr_number)
-        round_prompt = prompt.replace("{diff}", diff[:40000])
-        if thread:
-            round_prompt += "\n\n## The PR thread so far\n" + "\n".join(thread)
         if prior:
             # rounds are isolated sessions — carry the prior findings in, so
             # round N verifies/extends rather than repeats round 1
-            round_prompt += ("\n\n## Your earlier findings (verify against the "
-                             "current diff; drop resolved ones, keep and "
-                             "sharpen the rest)\n" + "\n---\n".join(prior))
-        res = runtime.run(round_prompt, cwd=".", timeout=cfg.pipeline.timeout)
-        if not res.ok:
-            forge.pr_comment(pr_number, f"AI pre-review round {rnd}: reviewer run failed.")
+            extra = ("\n\n## Your earlier findings (verify against the "
+                     "current diff; drop resolved ones, keep and "
+                     "sharpen the rest)\n" + "\n---\n".join(prior))
+        else:
+            extra = ""
+        res = run_round(forge, runtime, pr_number, "pre-review", prompt,
+                        rnd, cfg.pipeline.review_rounds, ".",
+                        cfg.pipeline.timeout, extra=extra)
+        if res is None:
             return ""
         prior.append(res.output.strip())
-        forge.pr_comment(pr_number, f"**AI pre-review, round {rnd}/{cfg.pipeline.review_rounds}**\n\n"
-                                 + res.output.strip()[-TAIL:])
-        if "LGTM" in res.output[-200:].upper():
+        if is_lgtm(res.output):
             return ""
     return prior[-1]

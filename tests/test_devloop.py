@@ -394,7 +394,7 @@ def test_conflict_gate_passes_disjoint_builds():
     class R:
         name = "fake"
 
-    out = delivery.deliver(Config(repo="o/r"), forge, R(), issue,
+    out = delivery.deliver(Config(repo="o/r"), forge, R().name, issue,
                            "devloop/issue-1", ".", "done")
     assert forge.prs == ["devloop/issue-1"]
 
@@ -523,7 +523,7 @@ def test_repair_pushes_gates_and_verifies():
     assert "Repo-specific repair guidance" in r.calls[0][0]  # skills/repair carried in
     assert f.pushed == 1
     assert "diff-v1" in r.calls[1][0]      # verifier saw the post-fix diff
-    assert "AI verify after repair 1" in f.notes[-1]
+    assert "AI verify, round 1/1" in f.notes[-1]
 
     # unresolved findings: budget exhausts, findings returned for the human
     f = RepairForge()
@@ -547,9 +547,9 @@ def test_build_flow_hands_review_findings_to_repair():
 
     calls = []
 
-    def fake_review(cfg, forge, runtime, pr, branch, issue_title="", issue_body=""):
-        calls.append(("review", issue_title))
-        return "" if issue_title == "lgtm" else "P1: wrong"
+    def fake_review(cfg, forge, runtime, pr, issue=None):
+        calls.append(("review", issue.title))
+        return "" if issue.title == "lgtm" else "P1: wrong"
 
     def fake_repair(cfg, forge, runtime, pr, branch, workdir, t, b, findings):
         calls.append(("repair", findings))
@@ -1326,3 +1326,91 @@ def test_git_identity_guard():
         assert subprocess.run(["git", "config", "user.email"], cwd=co,
                               capture_output=True, text=True).stdout.strip() \
             == "human@repo"
+
+
+def test_verify_gate_one_policy():
+    """The gate module owns the verify policy: PASS/FAIL semantics and the
+    timeout — a hung gate is a FAIL, not a wedge. Both callers (delivery,
+    repair) gate through this one interface."""
+    from devloop.gate import run_gate
+
+    assert run_gate("true", ".", 10) is True
+    assert run_gate("exit 1", ".", 10) is False
+    # the latent hang: a gate that never returns is a FAIL, not a blocked
+    # build thread — this is why the policy lives in one place
+    assert run_gate("sleep 2", ".", timeout=1) is False
+
+
+def test_branch_naming_one_owner():
+    """The devloop branch convention is owned by the Forge interface:
+    build and parse in one place, inherited by every adapter and fake —
+    callers never touch the string."""
+    from devloop.forge.base import Forge
+
+    f = Forge()
+    assert f.branch_for(7) == "devloop/issue-7"
+    assert f.issue_of_branch("devloop/issue-7") == 7
+    assert f.issue_of_branch("feature/x") is None          # stranger's branch
+    assert f.issue_of_branch("devloop/issue-") is None     # malformed
+    assert f.issue_of_branch("devloop/issue-x") is None    # unparseable
+
+
+def test_rounds_dialect_shared():
+    """The round engine: LGTM verdict parsing, thread formatting, and
+    repo-guidance loading exist once in rounds.py — and run_round owns the
+    full round bracket: diff+thread injection, announcement, run-failure
+    comment. Plus the PR-body contract, owned by delivery."""
+    from devloop.forge.base import Comment
+    from devloop.rounds import is_lgtm, run_round, thread_lines, with_repo_guidance
+
+    assert is_lgtm("all good\nLGTM") is True
+    assert is_lgtm("LGTM was mentioned earlier\nP1: still broken") is False
+    assert thread_lines([Comment("ann", "already fixed"),
+                         Comment("bob", "  out of scope  ")]) == \
+        ["- ann: already fixed", "- bob: out of scope"]
+    base = with_repo_guidance("BASE", "/nonexistent/skill.md", "X")
+    assert base == "BASE"  # missing guidance file leaves the prompt alone
+
+    from devloop.delivery import issue_of_body
+    assert issue_of_body("context\nCloses #12\nmore") == 12
+    assert issue_of_body("closes #7") == 7
+    assert issue_of_body("no marker here") is None
+
+    notes = []
+
+    class RoundForge:
+        def pr_diff_by_number(self, n):
+            return f"the diff"
+
+        def pr_comments(self, n):
+            return [Comment("human", "already fixed")]
+
+        def pr_comment(self, n, body):
+            notes.append(body)
+
+    class R:
+        name = "fake"
+
+        def run(self, prompt, cwd, timeout):
+            self.prompt, self.cwd = prompt, cwd
+            return type("Res", (), {"ok": True, "output": "P1: something"})()
+
+    # one round: {diff} filled from the forge, thread appended, extra last,
+    # announcement posted
+    f, r = RoundForge(), R()
+    res = run_round(f, r, 55, "pre-review", "judge {diff}", 1, 2, ".", 60,
+                    extra="\nPRIOR FINDINGS")
+    assert res is not None
+    assert "the diff" in r.prompt and "```diff" not in r.prompt.split("judge")[0]
+    assert "already fixed" in r.prompt and "PRIOR FINDINGS" in r.prompt
+    assert r.cwd == "."
+    assert notes[-1].startswith("**AI pre-review, round 1/2**")
+
+    # failed run: failure commented on the PR, None returned
+    class Boom(R):
+        def run(self, prompt, cwd, timeout):
+            return type("Res", (), {"ok": False, "output": "boom"})()
+
+    notes.clear()
+    assert run_round(RoundForge(), Boom(), 55, "repair", "x", 1, 1, ".", 60) is None
+    assert "AI repair round 1: run failed" in notes[-1]
