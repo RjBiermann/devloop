@@ -71,13 +71,18 @@ def merged(forge: Forge, issue: Issue | int, pr_number: int) -> None:
 
 def _scan_attempts(comments) -> tuple[int, int]:
     """One pass over the comment ledger → (total attempts, attempts today).
-    Both budgets (max_attempts, max_per_day) read the same history."""
+    Both budgets (max_attempts, max_per_day) read the same history.
+
+    Only producer-stamped comments count: a failure body always begins with
+    the DAY line, so agent-posted prose on the same timeline (progress
+    narration) can never move the budget — markers appearing mid-body in
+    untrusted text are inert."""
     total = today_n = 0
     today = f"{DAY} {date.today().isoformat()}\n"
     for c in comments:
         if c.body.startswith(RESET):
             total = today_n = 0
-        elif any(m in c.body for m in MARKERS.values()):
+        elif c.body.startswith(DAY) and any(m in c.body for m in MARKERS.values()):
             total += 1
             if c.body.startswith(today):
                 today_n += 1

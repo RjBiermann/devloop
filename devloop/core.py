@@ -6,6 +6,7 @@ devloop/queue.py. This module owns only the build flow and the sweep that
 drives it."""
 
 import logging
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -16,6 +17,7 @@ from .forge import Forge, Issue
 from .queue import next_builds
 from .repair import repair_pr
 from .review import review_pr
+from .rounds import with_repo_guidance
 from .runtime import AgentRuntime
 
 log = logging.getLogger(__name__)
@@ -40,6 +42,31 @@ PROMPTS = {
 
 
 # --- spec loop: moved to devloop/spec.py -------------------------------------
+
+
+# Agent narration: the orchestrator brackets a run (build-started heartbeat,
+# ledger entries), the agent narrates inside it. Prose, never state — the
+# ledger parser counts only producer-stamped comments, so agent markers
+# mid-body are inert.
+PROGRESS = (
+    "Visibility: for a run longer than a few minutes, post at most 3 progress "
+    "comments on this issue (`gh issue comment {n}` is allowed) — what you just "
+    "finished, what you're doing next, one or two lines. Plain prose only: never "
+    "write anything resembling a devloop status, budget, or ledger marker — your "
+    "comments are narration, not state. Short runs need no progress comments."
+)
+
+
+def _build_prompt(kind: str, issue: Issue) -> str:
+    """Kind prompt + progress instruction, substituted, then per-repo
+    guidance from skills/progress/SKILL.md when the adopter has one."""
+    prompt = (PROMPTS[kind] + "\n\n" + PROGRESS)
+    prompt = (prompt
+              .replace("{n}", str(issue.number))
+              .replace("{title}", issue.title)
+              .replace("{body}", issue.body))
+    return with_repo_guidance(prompt, "skills/progress/SKILL.md",
+                              "Repo-specific progress guidance")
 
 
 def process_issue(cfg: Config, forge: Forge, runtime: AgentRuntime, issue: Issue,
@@ -71,12 +98,8 @@ def process_issue(cfg: Config, forge: Forge, runtime: AgentRuntime, issue: Issue
         try:
             log.info("#%d: agent run started (%s, kind %s, branch %s)",
                      issue.number, agent.name, kind, branch)
-            res = agent.run(
-                PROMPTS[kind]
-                .replace("{n}", str(issue.number))
-                .replace("{title}", issue.title)
-                .replace("{body}", issue.body),
-                cwd=workdir, timeout=cfg.pipeline.build_timeout)
+            res = agent.run(_build_prompt(kind, issue),
+                            cwd=workdir, timeout=cfg.pipeline.build_timeout)
         except Exception as e:
             # Timeout/explosion mid-run: no delivery, but the human must know.
             log.error("#%d: agent run failed after %.0fs: %s", issue.number,
@@ -92,6 +115,7 @@ def process_issue(cfg: Config, forge: Forge, runtime: AgentRuntime, issue: Issue
             return Outcome(issue.number, branch, False)
         log.info("#%d: agent run finished in %.0fs — delivering", issue.number,
                  time.monotonic() - t0)
+        log.debug("#%d: agent output tail:\n%s", issue.number, res.output)
         out = deliver(cfg, forge, runtime.name, issue, branch, workdir, res.output)
         if out.pr:
             findings = review_pr(cfg, forge, runtime, out.pr, issue)

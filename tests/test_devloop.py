@@ -6,6 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from devloop import ledger as _ledger
 from devloop.config import Access, Config, Labels, Pipeline
 from devloop.forge.base import Comment, Forge, Issue
 from devloop.guardrails import GuardrailViolation
@@ -426,10 +427,13 @@ def _cmd_forge(auth_ok=True):
         def pr_comment(self, n, body): self.notes.append((n, body))
 
         def comments(self, n):
-            # ledger: one failure, then a reset, then one more failure
-            return [Comment("boss", "agent run FAILED — no PR opened."),
+            # ledger: one failure, then a reset, then one more failure —
+            # bodies in the producer's real shape (DAY-stamped: the parser
+            # counts only producer-stamped comments, agent prose is inert)
+            day = f"{_ledger.DAY} 2000-01-01"
+            return [Comment("boss", f"{day}\n\nagent run FAILED — no PR opened."),
                     Comment("dev", "build reset by `/retry` — attempt budget cleared"),
-                    Comment("boss", "delivery FAILED (x)")]
+                    Comment("boss", f"{day}\n\ndelivery FAILED (x)")]
 
     return CmdForge()
 
@@ -1170,7 +1174,8 @@ def test_skip_reasons_are_logged():
             return [Issue(n, f"t{n}", "", ["ai-fix"]) for n in (1, 2, 3)]
 
         def comments(self, number):
-            return [Comment("x", "agent run FAILED — x")] * self._attempts.get(number, 0)
+            day = f"{_ledger.DAY} 2000-01-01"
+            return [Comment("x", f"{day}\n\nagent run FAILED — x")] * self._attempts.get(number, 0)
 
     records = []
 
@@ -1232,7 +1237,8 @@ def test_status_previews_queue_without_side_effects():
             return [Issue(n, f"t{n}", "", ["ai-fix"]) for n in (1, 2, 3)]
 
         def comments(self, number):
-            return [Comment("x", "agent run FAILED — x")] * self._attempts.get(number, 0)
+            day = f"{_ledger.DAY} 2000-01-01"
+            return [Comment("x", f"{day}\n\nagent run FAILED — x")] * self._attempts.get(number, 0)
 
     cfg = Config(repo="o/r", pipeline=Pipeline(max_parallel=2, max_attempts=3))
     forge = CapForge(open_prs=[OpenPR(77, "devloop/issue-2", [])], attempts={1: 3})
@@ -1253,6 +1259,84 @@ def test_status_previews_queue_without_side_effects():
     assert not full.cwds
 
 
+def test_ledger_ignores_spoofed_markers():
+    """Agents now post prose on the issue timeline — the ledger counts only
+    producer-stamped (DAY-prefixed) comments, so agent narration containing a
+    marker string mid-body can never move the attempt budget."""
+    from devloop import ledger
+
+    notes = []
+
+    class Forge_:
+        def comment(self, n, body): notes.append(body)
+        def comments(self, n): return [Comment("x", b) for b in notes]
+
+    forge, issue = Forge_(), type("I", (), {"number": 1})()
+
+    # producer path unchanged: a real failure counts
+    ledger.failure(forge, issue, "agent", note="n", tail="t")
+    assert ledger.count(forge, issue) == 1
+
+    # agent prose containing a marker mid-body (no DAY stamp) is inert
+    notes.append("hit a snag — felt like an agent run FAILED moment, retried")
+    assert ledger.count(forge, issue) == 1
+    total, today = ledger.budget(forge, issue)
+    assert (total, today) == (1, 1)
+
+
+def test_build_prompts_carry_progress_narration():
+    """Every kind's prompt carries the progress instruction, and per-repo
+    guidance (skills/progress/SKILL.md) is appended when present."""
+    import devloop.core as core
+    from devloop.forge.base import Issue
+
+    class F(Forge):
+        def __init__(self):
+            self.notes, self.finished, self.prs = [], [], []
+
+        def start_work(self, n, branch): return f"/fake/wt-{n}"
+        def finish_work(self, n): self.finished.append(n)
+        def comment(self, n, body): self.notes.append(body)
+        def comments(self, n): return [Comment("x", b) for b in self.notes]
+        def commit_all(self, msg, workdir): return True
+        def pr_for_branch(self, b): return None
+        def open_devloop_prs(self): return []
+        def branch_files(self, b): return []
+        def open_pr(self, branch, title, body): self.prs.append(branch)
+
+    class R:
+        name = "fake"
+        def run(self, prompt, cwd, timeout):
+            self.prompt = prompt
+            return type("Res", (), {"ok": True, "output": "work"})()
+
+    cfg = Config(repo="o/r", pipeline=Pipeline(review_rounds=0))
+    prompts = []
+    for label in ("ai-fix", "ai-build", "ai-remove"):
+        r = R()
+        core.process_issue(cfg, F(), r, Issue(3, "t3", "", [label]))
+        prompts.append(r.prompt)
+    assert len(prompts) == 3
+    assert all("progress comments" in p and "narration, not state" in p
+               for p in prompts)
+
+    # repo guidance: skills/progress/SKILL.md in the runner cwd is appended
+    import os
+    import tempfile
+    old = os.getcwd()
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            os.chdir(tmp)
+            (Path("skills") / "progress").mkdir(parents=True)
+            (Path("skills") / "progress" / "SKILL.md").write_text(
+                "REPO PROGRESS GUIDANCE\n")
+            r = R()
+            core.process_issue(cfg, F(), r, Issue(3, "t3", "", ["ai-fix"]))
+            assert "REPO PROGRESS GUIDANCE" in r.prompt
+    finally:
+        os.chdir(old)
+
+
 def test_queue_next_builds_selection_policy():
     """Selection policy probed through the queue module's interface — no
     agent, no driver: delivered-set skip, attempt cap, daily cap, and
@@ -1269,7 +1353,8 @@ def test_queue_next_builds_selection_policy():
             return [Issue(n, f"t{n}", "", ["ai-fix"]) for n in (1, 2, 3)]
 
         def comments(self, number):
-            return [Comment("x", "agent run FAILED — x")] * self._attempts.get(number, 0)
+            day = f"{_ledger.DAY} 2000-01-01"
+            return [Comment("x", f"{day}\n\nagent run FAILED — x")] * self._attempts.get(number, 0)
 
     cfg = Config(repo="o/r", pipeline=Pipeline(max_parallel=2, max_attempts=3))
 
@@ -1355,7 +1440,7 @@ def test_merged_pr_completes_issue():
     class LF(Forge):
         def comments(self, n):
             return [Comment("x", "devloop PR merged #55 — closing the issue"),
-                    Comment("x", "agent run FAILED — boom")]
+                    Comment("x", f"{_ledger.DAY} 2000-01-01\n\nagent run FAILED — boom")]
 
     from devloop import ledger
     from devloop.forge.base import Issue

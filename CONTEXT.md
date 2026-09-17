@@ -39,11 +39,25 @@ a protocol, not prose: the attempt cap (`max_attempts`) counts them back out of
 the comment history — no extra state anywhere. The **ledger module** (`devloop/ledger.py`) owns this interface: producer
 functions (`failure`, `reset`) and the parsers (`count` for the attempt
 cap, `budget` for both caps in one scan — max_attempts and max_per_day
-read the same comment history). Marker strings are load-bearing for
-comments already on live issues and never change — only append. Related
+read the same comment history). Marker strings are load-bearing for comments already on live issues and never
+change — only append. The parser counts only producer-stamped comments (bodies
+beginning with the `devloop budget:` line): agents now post prose on the same
+timeline (see Progress), so a marker string appearing mid-body in untrusted
+narration is inert by construction. Related
 terms from AGENTS.md: trigger labels, `ready-for-human`, the `devloop: status=`
 marker (the spec-loop counterpart of the ledger protocol; the spec loop lives
 in `devloop/spec.py`).
+
+### Progress
+
+Agent-posted narration during a build: short prose comments the agent leaves
+on its own issue while working — what just finished, what's next — capped at
+~3 by the build prompt, with per-repo guidance in `skills/progress/SKILL.md`.
+Progress is prose, never state: it carries no ledger marker, is parsed by
+nothing, and can never move an attempt budget (see Ledger). The orchestrator
+brackets the run — build-started heartbeat comment, run log, ledger outcome;
+the agent narrates inside that bracket. Not the same as the heartbeat (the
+orchestrator's own comment) or Review (findings on a PR after delivery).
 
 ### Delivery
 
