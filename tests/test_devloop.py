@@ -547,9 +547,9 @@ def test_build_flow_hands_review_findings_to_repair():
 
     calls = []
 
-    def fake_review(cfg, forge, runtime, pr, branch, issue_title="", issue_body=""):
-        calls.append(("review", issue_title))
-        return "" if issue_title == "lgtm" else "P1: wrong"
+    def fake_review(cfg, forge, runtime, pr, issue=None):
+        calls.append(("review", issue.title))
+        return "" if issue.title == "lgtm" else "P1: wrong"
 
     def fake_repair(cfg, forge, runtime, pr, branch, workdir, t, b, findings):
         calls.append(("repair", findings))

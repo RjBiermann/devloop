@@ -8,6 +8,7 @@ own ledger comment and returns an Outcome, so a silent delivery failure is
 a bug in one place, not a forgotten except clause in a caller.
 """
 
+import re
 from dataclasses import dataclass
 
 from . import ledger
@@ -76,14 +77,7 @@ def deliver(cfg: Config, forge: Forge, agent_name: str, issue: Issue,
             forge.open_pr(
                 branch,
                 title=f"devloop({kind}): {issue.title} (#{issue.number})",
-                body=(
-                    f"Closes #{issue.number}\n\n"
-                    f"- agent: `{agent_name}`\n"
-                    f"- gate: {'PASS' if gate_ok else 'FAIL'}"
-                    + (f" (`{cfg.pipeline.verify}`)" if cfg.pipeline.verify else " (none configured)")
-                    + "\n\nHuman merge required — agents never merge."
-                    + "\n\n## Agent report\n\n" + agent_output[-TAIL:].strip()
-                ),
+                body=_pr_body(issue, agent_name, gate_ok, cfg.pipeline.verify, agent_output),
             )
             forge.comment(issue.number, f"Work delivered on `{branch}` — gate {'PASS' if gate_ok else 'FAIL'}.")
         return Outcome(issue.number, branch, True, gate_ok,
@@ -94,3 +88,25 @@ def deliver(cfg: Config, forge: Forge, agent_name: str, issue: Issue,
         # not just on the runner's stderr.
         ledger.failure(forge, issue, "delivery", note=f"no PR opened ({type(e).__name__})", tail=str(e))
         return Outcome(issue.number, branch, True, gate_ok)
+
+
+def _pr_body(issue: Issue, agent_name: str, gate_ok: bool, verify: str,
+             agent_output: str) -> str:
+    """The devloop PR body. This module owns the format — written here,
+    parsed by issue_of_body() below; the `Closes #N` marker is load-bearing
+    for review-by-number."""
+    return (
+        f"Closes #{issue.number}\n\n"
+        f"- agent: `{agent_name}`\n"
+        f"- gate: {'PASS' if gate_ok else 'FAIL'}"
+        + (f" (`{verify}`)" if verify else " (none configured)")
+        + "\n\nHuman merge required — agents never merge."
+        + "\n\n## Agent report\n\n" + agent_output[-TAIL:].strip()
+    )
+
+
+def issue_of_body(body: str) -> int | None:
+    """The issue a devloop PR closes, from the body this module writes.
+    None when the body carries no marker (human-authored PR, edited body)."""
+    m = re.search(r"[Cc]loses #(\d+)", body)
+    return int(m.group(1)) if m else None

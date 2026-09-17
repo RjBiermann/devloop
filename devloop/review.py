@@ -11,10 +11,9 @@ round's findings ("" on LGTM or failed run) — the build flow hands them
 to repair.
 """
 
-import re
-
 from .config import Config
-from .forge import Forge
+from .delivery import issue_of_body
+from .forge import Forge, Issue
 from .rounds import DIFF_CAP, is_lgtm, thread_block, thread_lines, with_repo_guidance
 from .runtime import TAIL, AgentRuntime
 
@@ -45,19 +44,18 @@ def review_prompt(cfg: Config, issue_title: str = "", issue_body: str = "") -> s
 
 
 def review_pr(cfg: Config, forge: Forge, runtime: AgentRuntime, pr_number: int,
-              branch: str = "", issue_title: str = "", issue_body: str = "") -> str:
+              issue: Issue | None = None) -> str:
     """AI pre-review rounds (pipeline.review_rounds) on one PR. Stops early
     on LGTM. Returns the last round's findings ("" on LGTM or failed run).
-    branch = head branch when known (build flow); empty = review-by-number
-    (`devloop review <pr>`), diff fetched from the forge.
-    issue_title/issue_body: the spec the diff is judged against (the builder
-    flow has it; review-by-number parses `Closes #N` from the PR body)."""
-    if not issue_title:
-        body = forge.pr_body(pr_number)
-        m = re.search(r"[Cc]loses #(\d+)", body)
-        if m:
-            it = forge.issue(int(m.group(1)))
-            issue_title, issue_body = it.title, it.body
+    issue = the spec the diff is judged against — the build flow has it;
+    None = review-by-number (`devloop review <pr>`), reconstructed from the
+    PR body's `Closes #N` marker (parsed by delivery, the format owner).
+    No marker on the body → review proceeds without spec context."""
+    if issue is None:
+        n = issue_of_body(forge.pr_body(pr_number))
+        issue = forge.issue(n) if n else None
+    issue_title, issue_body = (issue.title, issue.body) if issue else ("", "")
+    issue_title, issue_body = (issue.title, issue.body) if issue else ("", "")
     prompt = review_prompt(cfg, issue_title, issue_body)
     # the reviewer reads the PR thread once at the start — human replies
     # ("already fixed elsewhere", "out of scope") must not be ignored

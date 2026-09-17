@@ -82,8 +82,7 @@ def process_issue(cfg: Config, forge: Forge, runtime: AgentRuntime, issue: Issue
             return Outcome(issue.number, branch, False)
         out = deliver(cfg, forge, runtime.name, issue, branch, workdir, res.output)
         if out.pr:
-            findings = review_pr(cfg, forge, runtime, out.pr, branch,
-                                 issue_title=issue.title, issue_body=issue.body)
+            findings = review_pr(cfg, forge, runtime, out.pr, issue)
             if findings and cfg.pipeline.repair_rounds > 0:
                 repair_pr(cfg, forge, runtime, out.pr, branch, workdir,
                           issue.title, issue.body, findings)
