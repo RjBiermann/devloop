@@ -10,9 +10,12 @@ issues were written by older versions, so they never change — only append.
 """
 
 from datetime import date
+import logging
 
 from .forge import Forge, Issue
 from .runtime import TAIL
+
+log = logging.getLogger(__name__)
 
 MARKERS = {
     "agent": "agent run FAILED",      # the agent run itself died/timed out
@@ -47,6 +50,7 @@ def failure(forge: Forge, issue: Issue | int, kind: str, note: str = "",
     if tail:
         body += f"\n```\n{tail[-TAIL:]}\n```"
     n = issue.number if isinstance(issue, Issue) else issue
+    log.info("ledger #%d: %s%s", n, MARKERS[kind], f" — {note}" if note else "")
     forge.comment(n, body)
 
 
@@ -61,6 +65,7 @@ def merged(forge: Forge, issue: Issue | int, pr_number: int) -> None:
     """Post one completion entry: the human merged the devloop PR — the
     issue's build lifecycle is done. On the record like every ledger entry."""
     n = issue.number if isinstance(issue, Issue) else issue
+    log.info("ledger #%d: %s #%d", n, MERGED, pr_number)
     forge.comment(n, f"{MERGED} #{pr_number} — closing the issue")
 
 

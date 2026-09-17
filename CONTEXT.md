@@ -13,6 +13,17 @@ labels, comment commands, merged-PR closeouts, and pushes to the default
 branch all just feed the next sweep; the schedule (30-min cron) exists
 only so missed events self-heal, not as the primary trigger.
 
+### Status
+
+The read-only preview of the Sweep's queue decisions: which labeled issues
+would start a build now (and which attempt number they'd be), which are
+skipped and why (already delivered, attempt budget exhausted, daily cap,
+no free slot), and which devloop PRs are in flight. No agent runs, no forge
+writes — a Status report never changes anything and never triggers a build,
+and it shares its selection policy with the Sweep rather than duplicating
+it. The record of what a sweep actually *did* is the run log, not an issue
+comment — the Ledger stays the issue-side record.
+
 ### Version
 
 Semver-ish number identifying a release: `Tag = release`, every merge to master

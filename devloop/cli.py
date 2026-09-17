@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import logging
 import os
 import shutil
 import sys
@@ -12,10 +13,32 @@ from . import __version__
 from .config import load
 from .core import handle_command, handle_merge, run_once
 from .forge import get_forge
+from .queue import status_lines
 from .review import review_pr
 from .runtime import get_runtime
 from .skillcheck import validate_skills
 from .spec import process_spec
+
+log = logging.getLogger(__name__)
+
+
+def _setup_logging(v: int) -> None:
+    """Verbosity: default WARNING, -v INFO, -vv DEBUG; DEVLOOP_DEBUG=1|2
+    when the flag is absent (set once in the workflow, no CLI change).
+    One stderr handler on the `devloop` root logger; modules log via
+    logging.getLogger(__name__) and inherit it."""
+    if not v:
+        try:
+            v = int(os.environ.get("DEVLOOP_DEBUG", ""))
+        except ValueError:
+            v = 0
+    h = logging.StreamHandler()
+    h.setFormatter(logging.Formatter(
+        "%(asctime)s %(levelname)s %(name)s: %(message)s", "%H:%M:%S"))
+    root = logging.getLogger("devloop")
+    root.addHandler(h)
+    root.setLevel([logging.WARNING, logging.INFO, logging.DEBUG][min(v, 2)])
+    root.propagate = False
 
 
 def cmd_init(_args: argparse.Namespace) -> None:
@@ -128,26 +151,40 @@ def cmd_merged(_args: argparse.Namespace) -> None:
         print(f"merge result: {out}")
 
 
+def cmd_status(_args: argparse.Namespace) -> None:
+    """Read-only queue preview: what the next sweep would start, what it
+    would skip and why. No agent run, no forge writes."""
+    cfg = load()
+    forge, _ = _runtime(cfg)
+    print("\n".join(status_lines(cfg, forge)))
+
+
 def cmd_watch(_args: argparse.Namespace) -> None:
     cfg = load()
-    print(f"watching {cfg.repo} every {cfg.pipeline.poll_seconds}s — ctrl-c to stop")
+    # a watch loop nobody can see is indistinguishable from a hung one:
+    # sweeps log their summary at INFO, so watch always shows them
+    logging.getLogger("devloop").setLevel(logging.INFO)
+    log.info("watching %s every %ss — ctrl-c to stop", cfg.repo, cfg.pipeline.poll_seconds)
     while True:
         try:
             forge, runtime = _runtime(cfg)
             run_once(cfg, forge, runtime)
         except Exception as e:  # keep watching; report and continue
-            print(f"run failed: {e}")
+            log.warning("sweep failed: %s", e)
         time.sleep(cfg.pipeline.poll_seconds)
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(prog="devloop", description=__doc__)
     ap.add_argument("--version", action="version", version=__version__)
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("-v", "--verbose", action="count", default=0,
+                        help="-v info, -vv debug (or DEVLOOP_DEBUG=1|2)")
     sub = ap.add_subparsers(required=True)
     for name, fn in [("init", cmd_init), ("once", cmd_once), ("watch", cmd_watch),
                      ("spec", cmd_spec), ("review", cmd_review), ("command", cmd_command),
-                     ("merged", cmd_merged)]:
-        s = sub.add_parser(name)
+                     ("merged", cmd_merged), ("status", cmd_status)]:
+        s = sub.add_parser(name, parents=[common])
         s.set_defaults(fn=fn)
         if name == "spec":
             s.add_argument("issue", type=int, help="issue number to refine")
@@ -156,4 +193,5 @@ def main() -> None:
         if name == "command" or name == "merged":
             s.add_argument("--event", default="", help="path to GitHub event payload (default $GITHUB_EVENT_PATH)")
     args = ap.parse_args()
+    _setup_logging(args.verbose)
     args.fn(args)

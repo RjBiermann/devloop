@@ -91,7 +91,8 @@ devloop spec 42           # ② agent posts epic/story/sub-issue breakdown
 devloop spec 42           # ③ sub-issues created (unlabeled) + issue body = final spec
 # you apply a trigger label on a story issue → `devloop once` builds it
 
-devloop once              # process everything pending
+devloop once              # process everything pending (-v info, -vv debug)
+devloop status            # what the next sweep would start/skip and why (read-only)
 devloop watch             # poll loop for local / CI-less setups
 ```
 

@@ -5,7 +5,8 @@ the ledger protocol is devloop/ledger.py; build selection policy is
 devloop/queue.py. This module owns only the build flow and the sweep that
 drives it."""
 
-import sys
+import logging
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 from . import ledger
@@ -16,6 +17,8 @@ from .queue import next_builds
 from .repair import repair_pr
 from .review import review_pr
 from .runtime import AgentRuntime
+
+log = logging.getLogger(__name__)
 
 # Per trigger kind: what the agent is asked to do. Skills carry the how.
 PROMPTS = {
@@ -62,9 +65,12 @@ def process_issue(cfg: Config, forge: Forge, runtime: AgentRuntime, issue: Issue
     # Forge allocates the private checkout (one per build — parallel agents
     # must never share a working tree); process_issue owns the cleanup bracket.
     workdir = forge.start_work(issue.number, branch)
+    t0 = time.monotonic()
     try:
         res = None
         try:
+            log.info("#%d: agent run started (%s, kind %s, branch %s)",
+                     issue.number, agent.name, kind, branch)
             res = agent.run(
                 PROMPTS[kind]
                 .replace("{n}", str(issue.number))
@@ -73,13 +79,19 @@ def process_issue(cfg: Config, forge: Forge, runtime: AgentRuntime, issue: Issue
                 cwd=workdir, timeout=cfg.pipeline.build_timeout)
         except Exception as e:
             # Timeout/explosion mid-run: no delivery, but the human must know.
+            log.error("#%d: agent run failed after %.0fs: %s", issue.number,
+                      time.monotonic() - t0, type(e).__name__)
             ledger.failure(forge, issue, "agent", note=f"no PR opened ({type(e).__name__})", tail=str(e))
             return Outcome(issue.number, branch, False, False)
         if not res.ok:
             # A failed agent run must not ship: no commit, no gate, no PR — the
             # error tail goes to the issue for the human, the branch stays local.
+            log.error("#%d: agent run FAILED after %.0fs (exit nonzero)", issue.number,
+                      time.monotonic() - t0)
             ledger.failure(forge, issue, "agent", note="no PR opened", tail=res.output)
             return Outcome(issue.number, branch, False)
+        log.info("#%d: agent run finished in %.0fs — delivering", issue.number,
+                 time.monotonic() - t0)
         out = deliver(cfg, forge, runtime.name, issue, branch, workdir, res.output)
         if out.pr:
             findings = review_pr(cfg, forge, runtime, out.pr, issue)
@@ -107,8 +119,8 @@ def rebase_stale(cfg: Config, forge: Forge) -> None:
             # infrastructure failure (transient network, git hiccup) — not a
             # conflict: never a reason to close a PR and destroy delivered
             # work. Skip the head loudly; the next sweep retries it.
-            print(f"rebase of {head} failed ({type(e).__name__}: {str(e)[:300]}) — "
-                  "skipping this sweep", file=sys.stderr)
+            log.warning("rebase of %s failed (%s: %s) — skipping this sweep",
+                        head, type(e).__name__, str(e)[:300])
             continue
         if clean:
             continue  # clean — no-op or silently updated, nothing to announce
@@ -173,10 +185,12 @@ def handle_merge(cfg: Config, forge: Forge, pr_number: int, head_branch: str) ->
 
 
 def run_once(cfg: Config, forge: Forge, runtime: AgentRuntime) -> list[Outcome]:
+    sweep_t0 = time.monotonic()
     # Upkeep before slot math: rebase stale PRs; a conflict-closed PR frees a slot.
     rebase_stale(cfg, forge)
     candidates = next_builds(cfg, forge)
     if not candidates:
+        log.info("sweep: nothing to build")
         return []
 
     def worker(issue: Issue) -> Outcome:
@@ -185,11 +199,15 @@ def run_once(cfg: Config, forge: Forge, runtime: AgentRuntime) -> list[Outcome]:
         except Exception as e:
             # One broken issue must not block the queue (head-of-line blocking
             # would retry it forever in watch mode and starve everything else).
-            print(f"#{issue.number}: failed: {e}", file=sys.stderr)
+            log.error("#%d: build crashed: %s", issue.number, e)
             return Outcome(issue.number, forge.branch_for(issue.number), False, False)
 
     out: list[Outcome] = []
     with ThreadPoolExecutor(max_workers=len(candidates)) as pool:
         for r in pool.map(worker, candidates):
             out.append(r)
+    log.info("sweep done in %.0fs: %d started, %d shipped a PR, %d failed",
+             time.monotonic() - sweep_t0, len(out),
+             sum(1 for o in out if getattr(o, "pr", None)),
+             sum(1 for o in out if not getattr(o, "agent_ok", True)))
     return out

@@ -8,6 +8,7 @@ own ledger comment and returns an Outcome, so a silent delivery failure is
 a bug in one place, not a forgotten except clause in a caller.
 """
 
+import logging
 import re
 from dataclasses import dataclass
 
@@ -16,6 +17,8 @@ from .config import Config
 from .forge import Forge, Issue
 from .gate import run_gate
 from .runtime import TAIL
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -38,6 +41,7 @@ def deliver(cfg: Config, forge: Forge, agent_name: str, issue: Issue,
         # delivered, not the (possibly older) default checkout; the gate
         # module owns the policy (timeout, PASS semantics)
         gate_ok = run_gate(cfg.pipeline.verify, workdir, cfg.pipeline.timeout)
+    log.info("#%d: gate %s", issue.number, "PASS" if gate_ok else "FAIL")
     try:
         existing = forge.pr_for_branch(branch)
         # half-delivery rule lives behind the Forge seam: commit_all returns
@@ -47,6 +51,7 @@ def deliver(cfg: Config, forge: Forge, agent_name: str, issue: Issue,
         if not existing and not delivered:
             # No diff AND no PR — nothing delivered. The agent said something —
             # that's the finding (question, verdict, or stall); surface it.
+            log.warning("#%d: nothing delivered — agent made no changes", issue.number)
             ledger.failure(forge, issue, "no-changes",
                            note="no PR opened — agent output tail", tail=agent_output)
             return Outcome(issue.number, branch, True, gate_ok)
@@ -62,6 +67,8 @@ def deliver(cfg: Config, forge: Forge, agent_name: str, issue: Issue,
                 if p.head != branch and touched & set(p.files)
             ]
             if conflicts:
+                log.warning("#%d: deferred — files overlap open devloop PR(s) %s",
+                            issue.number, ', '.join(conflicts))
                 ledger.failure(forge, issue, "deferred",
                                note=f"branch `{branch}` touches files also touched by "
                                     f"open devloop PR(s) {', '.join(conflicts)}; "
@@ -80,12 +87,15 @@ def deliver(cfg: Config, forge: Forge, agent_name: str, issue: Issue,
                 body=_pr_body(issue, agent_name, gate_ok, cfg.pipeline.verify, agent_output),
             )
             forge.comment(issue.number, f"Work delivered on `{branch}` — gate {'PASS' if gate_ok else 'FAIL'}.")
+        log.info("#%d: delivered as %s", issue.number,
+                 (existing or forge.pr_for_branch(branch)))
         return Outcome(issue.number, branch, True, gate_ok,
                        existing or forge.pr_for_branch(branch))
     except Exception as e:
         # Delivery-stage failure (gate, commit, PR creation): the agent did
         # its work but the pipeline could not ship it — tell the human here,
         # not just on the runner's stderr.
+        log.error("#%d: delivery failed: %s", issue.number, type(e).__name__)
         ledger.failure(forge, issue, "delivery", note=f"no PR opened ({type(e).__name__})", tail=str(e))
         return Outcome(issue.number, branch, True, gate_ok)
 

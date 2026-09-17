@@ -1152,6 +1152,107 @@ def test_runtime_output_keeps_stderr_off_success():
         rt.subprocess.run = real_run
 
 
+def test_skip_reasons_are_logged():
+    """The decision trace: every queue skip names its reason in the log —
+    a silent green no-op is the worst failure mode a pipeline has."""
+    import datetime
+    import logging
+    from devloop import ledger
+    from devloop.queue import next_builds
+    from devloop.forge.base import OpenPR
+
+    class CapForge(FlowForge):
+        def __init__(self, attempts=(), open_prs=()):
+            super().__init__(open_prs=open_prs)
+            self._attempts = dict(attempts)
+
+        def issues_with_labels(self, _l):
+            return [Issue(n, f"t{n}", "", ["ai-fix"]) for n in (1, 2, 3)]
+
+        def comments(self, number):
+            return [Comment("x", "agent run FAILED — x")] * self._attempts.get(number, 0)
+
+    records = []
+
+    class Capture(logging.Handler):
+        def emit(self, r):
+            records.append(r.getMessage())
+
+    qlog = logging.getLogger("devloop.queue")
+    h, old_level, old_prop = Capture(), qlog.level, qlog.propagate
+    qlog.addHandler(h)
+    qlog.setLevel(logging.INFO)
+    qlog.propagate = False
+    try:
+        # queue full: the loud no-op, visible at default verbosity
+        next_builds(Config(repo="o/r"), CapForge(
+            open_prs=[OpenPR(77, "devloop/issue-2", []), OpenPR(78, "devloop/issue-8", [])]))
+        assert any("queue full" in m for m in records)
+        records.clear()
+
+        # delivered skip + attempt-cap skip, each naming issue and reason
+        cfg = Config(repo="o/r", pipeline=Pipeline(max_parallel=2, max_attempts=3))
+        next_builds(cfg, CapForge(open_prs=[OpenPR(77, "devloop/issue-2", [])],
+                                  attempts={1: 3}))
+        text = "\n".join(records)
+        assert "#2" in text and "already delivered" in text
+        assert "#1" in text and "failed attempts" in text
+        records.clear()
+
+        # daily-cap skip
+        today = f"{ledger.DAY} {datetime.date.today().isoformat()}"
+
+        class DailyForge(CapForge):
+            def comments(self, number):
+                return [Comment("x", f"{today}\n\nagent run FAILED")] * self._attempts.get(number, 0)
+
+        next_builds(Config(repo="o/r", pipeline=Pipeline(max_parallel=3, max_per_day=2)),
+                    DailyForge(attempts={2: 2}))
+        assert any("#2" in m and "daily cap" in m for m in records)
+    finally:
+        qlog.removeHandler(h)
+        qlog.setLevel(old_level)
+        qlog.propagate = old_prop
+
+
+def test_status_previews_queue_without_side_effects():
+    """devloop status: the same decisions next_builds makes, reported not
+    executed — no worktree allocated, no comments written, and the WOULD-START
+    set agrees with the policy it previews."""
+    import re
+    from devloop.queue import next_builds, status_lines
+    from devloop.forge.base import OpenPR
+
+    class CapForge(FlowForge):
+        def __init__(self, attempts=(), open_prs=()):
+            super().__init__(open_prs=open_prs)
+            self._attempts = dict(attempts)
+
+        def issues_with_labels(self, _l):
+            return [Issue(n, f"t{n}", "", ["ai-fix"]) for n in (1, 2, 3)]
+
+        def comments(self, number):
+            return [Comment("x", "agent run FAILED — x")] * self._attempts.get(number, 0)
+
+    cfg = Config(repo="o/r", pipeline=Pipeline(max_parallel=2, max_attempts=3))
+    forge = CapForge(open_prs=[OpenPR(77, "devloop/issue-2", [])], attempts={1: 3})
+    lines = status_lines(cfg, forge)
+    text = "\n".join(lines)
+    assert "#3" in text and "WOULD START" in text
+    assert "#2" in text and "already delivered" in text
+    assert "#1" in text and "budget exhausted" in text
+    would = {int(m.group(1)) for l in lines
+             if (m := re.match(r"  #(\d+) .*WOULD START", l))}
+    assert would == {i.number for i in next_builds(cfg, forge)}
+    # read-only: no worktree allocated, nothing posted
+    assert not forge.cwds and not forge.notes
+
+    # queue full: the preview names the bottleneck, starts nothing
+    full = CapForge(open_prs=[OpenPR(77, "devloop/issue-2", [])])
+    assert "queue full" in "\n".join(status_lines(Config(repo="o/r"), full))
+    assert not full.cwds
+
+
 def test_queue_next_builds_selection_policy():
     """Selection policy probed through the queue module's interface — no
     agent, no driver: delivered-set skip, attempt cap, daily cap, and
