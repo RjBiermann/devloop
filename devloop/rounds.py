@@ -1,15 +1,41 @@
 """Shared round plumbing for the review and repair loops.
 
-Internal seam — not part of either module's interface: prompt assembly
-(repo guidance + injected content), the PR-thread read, the diff
-injection cap, and the LGTM verdict. review.py and repair.py call these,
-so the dialect changes in one place.
+Internal seam — not part of either module's interface: one round of the
+agent dialect (run_round: fresh diff + thread into the prompt, agent run,
+announcement comment, run-failure comment), plus prompt assembly (repo
+guidance), the diff injection cap, and the LGTM verdict. review.py and
+repair.py call these, so the dialect changes in one place.
 """
 
 from pathlib import Path
 
+from .runtime import AgentRuntime, RunResult, TAIL
+
 # one cap for injected diffs — both loops truncate the same way
 DIFF_CAP = 40000
+
+
+def run_round(forge, runtime: AgentRuntime, pr_number: int, label: str,
+              prompt: str, rnd: int, total: int, cwd: str, timeout: int,
+              extra: str = "") -> RunResult | None:
+    """One agent round of the review/repair dialect, end to end: fetch the
+    forge's authoritative diff (GitHub computes it; local origin/HEAD-based
+    diffs proved unreliable mid-build), inject it against {diff} (caller
+    leaves the placeholder in), append the fresh PR thread, run the agent,
+    announce the round. extra is appended after the thread (review's
+    prior-findings carry). Returns the run result, or None when the run
+    failed — the failure is already commented on the PR."""
+    diff = forge.pr_diff_by_number(pr_number)
+    round_prompt = (prompt.replace("{diff}", diff[:DIFF_CAP])
+                    + thread_block(thread_lines(forge.pr_comments(pr_number))))
+    round_prompt += extra
+    res = runtime.run(round_prompt, cwd=cwd, timeout=timeout)
+    if not res.ok:
+        forge.pr_comment(pr_number, f"AI {label} round {rnd}: run failed.")
+        return None
+    forge.pr_comment(pr_number, f"**AI {label}, round {rnd}/{total}**\n\n"
+                             + res.output.strip()[-TAIL:])
+    return res
 
 
 def with_repo_guidance(base: str, skill_path: str, header: str) -> str:

@@ -12,8 +12,8 @@ merges; it only pushes commits to the PR branch that already exists.
 from .config import Config
 from .forge import Forge
 from .gate import run_gate
-from .rounds import DIFF_CAP, is_lgtm, thread_block, thread_lines, with_repo_guidance
-from .runtime import TAIL, AgentRuntime
+from .rounds import is_lgtm, run_round, with_repo_guidance
+from .runtime import AgentRuntime
 
 REPAIR_PROMPT = (
     "You are repairing a pull request based on AI review findings. The "
@@ -53,21 +53,13 @@ def repair_pr(cfg: Config, forge: Forge, runtime: AgentRuntime, pr_number: int,
     prompt = (prompt
               .replace("{issue_title}", issue_title)
               .replace("{issue_body}", issue_body))
-    thread = thread_lines(forge.pr_comments(pr_number))
     for rnd in range(1, cfg.pipeline.repair_rounds + 1):
-        # fresh diff every round — the fixer and verifier must judge what
-        # is on the branch now, not what review round 1 saw
-        diff = forge.pr_diff_by_number(pr_number)
-        round_prompt = (prompt
-                        .replace("{findings}", findings)
-                        .replace("{diff}", diff[:DIFF_CAP]))
-        round_prompt += thread_block(thread)
-        res = runtime.run(round_prompt, cwd=workdir, timeout=cfg.pipeline.timeout)
-        if not res.ok:
-            forge.pr_comment(pr_number, f"AI repair round {rnd}: fixer run failed.")
+        res = run_round(forge, runtime, pr_number, "repair",
+                        prompt.replace("{findings}", findings),
+                        rnd, cfg.pipeline.repair_rounds, workdir,
+                        cfg.pipeline.timeout)
+        if res is None:
             return findings
-        forge.pr_comment(pr_number, f"**AI repair, round {rnd}/{cfg.pipeline.repair_rounds}**\n\n"
-                                 + res.output.strip()[-TAIL:])
         if cfg.pipeline.verify:
             # gate before push — the gate module owns the policy; a repair
             # that pushes failing code is worse than no repair, the finding
@@ -77,20 +69,18 @@ def repair_pr(cfg: Config, forge: Forge, runtime: AgentRuntime, pr_number: int,
                                  f"AI repair round {rnd}: verify gate FAILED — "
                                  "fix not pushed, findings remain open.")
                 return findings
-        forge.commit_all(f"devloop(repair): address AI review findings", workdir)
+        forge.commit_all("devloop(repair): address AI review findings", workdir)
         # one verification round per repair (cheap: it re-checks the
-        # findings against the current diff, it does not re-review the PR)
-        # diff re-fetched AFTER the fixer — the verifier judges what is
-        # now on the branch, not the diff the fixer was handed
-        vres = runtime.run(VERIFY_PROMPT.replace("{findings}", findings)
-                                     .replace("{diff}", forge.pr_diff_by_number(pr_number)[:DIFF_CAP]),
-                           cwd=workdir, timeout=cfg.pipeline.timeout)
-        if vres.ok:
-            forge.pr_comment(pr_number, f"**AI verify after repair {rnd}**\n\n"
-                                     + vres.output.strip()[-TAIL:])
-            if is_lgtm(vres.output):
-                return ""
-        findings = vres.output.strip() if vres.ok else findings
+        # findings against the current diff, it does not re-review the PR).
+        # run_round fetches the diff AFTER the fixer committed — the verifier
+        # judges what is now on the branch, not the diff the fixer was handed
+        vres = run_round(forge, runtime, pr_number, "verify",
+                         VERIFY_PROMPT.replace("{findings}", findings),
+                         1, 1, workdir, cfg.pipeline.timeout)
+        if vres and is_lgtm(vres.output):
+            return ""
+        if vres:
+            findings = vres.output.strip()
     forge.pr_comment(pr_number,
                      f"AI repair budget exhausted ({cfg.pipeline.repair_rounds} "
                      "round(s)) — unresolved findings above; human decides.")

@@ -523,7 +523,7 @@ def test_repair_pushes_gates_and_verifies():
     assert "Repo-specific repair guidance" in r.calls[0][0]  # skills/repair carried in
     assert f.pushed == 1
     assert "diff-v1" in r.calls[1][0]      # verifier saw the post-fix diff
-    assert "AI verify after repair 1" in f.notes[-1]
+    assert "AI verify, round 1/1" in f.notes[-1]
 
     # unresolved findings: budget exhausts, findings returned for the human
     f = RepairForge()
@@ -1356,10 +1356,12 @@ def test_branch_naming_one_owner():
 
 
 def test_rounds_dialect_shared():
-    """The review/repair round dialect: LGTM verdict parsing, thread
-    formatting, and repo-guidance loading exist once, in rounds.py."""
+    """The round engine: LGTM verdict parsing, thread formatting, and
+    repo-guidance loading exist once in rounds.py — and run_round owns the
+    full round bracket: diff+thread injection, announcement, run-failure
+    comment. Plus the PR-body contract, owned by delivery."""
     from devloop.forge.base import Comment
-    from devloop.rounds import is_lgtm, thread_lines, with_repo_guidance
+    from devloop.rounds import is_lgtm, run_round, thread_lines, with_repo_guidance
 
     assert is_lgtm("all good\nLGTM") is True
     assert is_lgtm("LGTM was mentioned earlier\nP1: still broken") is False
@@ -1368,3 +1370,47 @@ def test_rounds_dialect_shared():
         ["- ann: already fixed", "- bob: out of scope"]
     base = with_repo_guidance("BASE", "/nonexistent/skill.md", "X")
     assert base == "BASE"  # missing guidance file leaves the prompt alone
+
+    from devloop.delivery import issue_of_body
+    assert issue_of_body("context\nCloses #12\nmore") == 12
+    assert issue_of_body("closes #7") == 7
+    assert issue_of_body("no marker here") is None
+
+    notes = []
+
+    class RoundForge:
+        def pr_diff_by_number(self, n):
+            return f"the diff"
+
+        def pr_comments(self, n):
+            return [Comment("human", "already fixed")]
+
+        def pr_comment(self, n, body):
+            notes.append(body)
+
+    class R:
+        name = "fake"
+
+        def run(self, prompt, cwd, timeout):
+            self.prompt, self.cwd = prompt, cwd
+            return type("Res", (), {"ok": True, "output": "P1: something"})()
+
+    # one round: {diff} filled from the forge, thread appended, extra last,
+    # announcement posted
+    f, r = RoundForge(), R()
+    res = run_round(f, r, 55, "pre-review", "judge {diff}", 1, 2, ".", 60,
+                    extra="\nPRIOR FINDINGS")
+    assert res is not None
+    assert "the diff" in r.prompt and "```diff" not in r.prompt.split("judge")[0]
+    assert "already fixed" in r.prompt and "PRIOR FINDINGS" in r.prompt
+    assert r.cwd == "."
+    assert notes[-1].startswith("**AI pre-review, round 1/2**")
+
+    # failed run: failure commented on the PR, None returned
+    class Boom(R):
+        def run(self, prompt, cwd, timeout):
+            return type("Res", (), {"ok": False, "output": "boom"})()
+
+    notes.clear()
+    assert run_round(RoundForge(), Boom(), 55, "repair", "x", 1, 1, ".", 60) is None
+    assert "AI repair round 1: run failed" in notes[-1]
