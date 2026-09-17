@@ -676,6 +676,8 @@ def test_commit_all_counts_pushed_ahead_as_delivered():
     sp.run(["git", "init", "--bare", "-q", bare], check=True)
     w = f"{tmp}/clone"
     sp.run(["git", "clone", "-q", bare, w], check=True)
+    sp.run(["git", "config", "user.email", "t@t"], cwd=w, check=True)
+    sp.run(["git", "config", "user.name", "t"], cwd=w, check=True)
 
     def g(*a, **kw):
         return sp.run(["git", *a], cwd=kw.pop("cwd", w),
