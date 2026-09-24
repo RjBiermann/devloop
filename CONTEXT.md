@@ -104,6 +104,19 @@ so a config rename can never orphan the trigger. Not to be confused with
 `ready-for-agent` (a triage label: specified and queued, but no build
 until a trigger label lands).
 
+### Command
+
+A `/`-comment a human leaves on an issue (`/review <pr>`, `/retry
+<issue>`) that devloop executes on their behalf — access-gated before
+anything happens, and never parsed out of agent-written comments
+(`issue_comment` CI event only). Commands **re-fire work, never create
+it**: labels create the work item, a command re-runs or inspects one
+that exists. Because the authorizing human is the command's author, the
+same carve-out as Closeout applies — `/retry` closing a stale PR is the
+human's sanction executed, not the agent judging work. Not a Trigger
+label: labels are issue-level markers that queue a build; commands are
+point-in-time actions on a specific issue or PR (AGENTS.md).
+
 ### Kind
 
 The canonical build class an issue dispatches as: `fix`, `new`, or
