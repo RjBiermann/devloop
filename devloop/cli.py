@@ -109,7 +109,7 @@ def cmd_review(args: argparse.Namespace) -> None:
     print(f"reviewed PR #{args.pr}: {cfg.pipeline.review_rounds} round(s) posted")
 
 
-def cmd_command(_args: argparse.Namespace) -> None:
+def cmd_command(args: argparse.Namespace) -> None:
     """Execute one comment command. Runs from CI's issue_comment event:
     reads the event payload, access-gates the author, executes.
     Silent exit when the comment isn't a command (zero token spend)."""

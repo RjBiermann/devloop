@@ -1,5 +1,6 @@
 """The one check: guardrails hold and trigger routing is correct."""
 
+import os
 import sys
 import json
 from pathlib import Path
@@ -1489,6 +1490,20 @@ def test_merged_cli_glue():
             with env:
                 cli.cmd_merged(args)
         assert forge.completed == 9
+
+
+def test_command_cli_glue():
+    """cmd_command must survive its own wiring: the param was renamed to
+    _args but the body still called _event(args) — NameError on every
+    issue_comment run before the command ever executed."""
+    import argparse
+    import unittest.mock as mock
+
+    import devloop.cli as cli
+
+    with mock.patch.dict("os.environ", {}, clear=False):
+        os.environ.pop("GITHUB_EVENT_PATH", None)
+        cli.cmd_command(argparse.Namespace(event=None))  # must not raise
 
 
 def test_git_identity_guard():
