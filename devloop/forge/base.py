@@ -17,6 +17,7 @@ class Issue:
 class Comment:
     author: str
     body: str
+    date: str = ""  # forge timestamp (e.g. created_at); empty = adapter doesn't provide it
 
 
 @dataclass
@@ -67,6 +68,10 @@ class Forge:
         raise NotImplementedError
 
     def comments(self, number: int) -> list[Comment]:
+        """Issue comments, oldest first. The ledger (budget parsing) hard-
+        requires this seam; the prompt's comment context alone degrades to
+        body-only when it raises. Adapters without it yet (gitlab/gitea
+        pending, see MILESTONES) must implement it before shipping."""
         raise NotImplementedError
 
     # --- write side ------------------------------------------------------

@@ -106,8 +106,10 @@ class GitHub(Forge):
     def comments(self, number: int) -> list[Comment]:
         # --paginate: long spec conversations exceed gh's default 30-per-page
         out = _run(["gh", "api", f"repos/{self.repo}/issues/{number}/comments",
-                    "--paginate", "--jq", "[.[] | {author: .user.login, body: .body}]"], gh_host=self._gh_host)
-        return [Comment(it["author"], it["body"]) for it in json.loads(out or "[]")]
+                    "--paginate", "--jq", "[.[] | {author: .user.login, "
+                    "body: .body, date: .created_at}]"], gh_host=self._gh_host)
+        return [Comment(it["author"], it["body"], it.get("date", ""))
+                for it in json.loads(out or "[]")]
 
     def pr_comments(self, pr_number: int) -> list[Comment]:
         # PR comments live on the issue endpoint with the same number
