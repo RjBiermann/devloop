@@ -31,6 +31,9 @@ max_parallel = 1           # concurrent builds. Each build gets its own git
                            # an open devloop PR are deferred to a later sweep,
                            # so raising this is safe — it changes throughput,
                            # not correctness (and not AI spend per issue)
+prompt_comments = 10       # issue comments fed into the build prompt (0 =
+                           # off). Access-gated: only authors who could fire a
+                           # command enter the prompt, framed as untrusted data
 max_attempts = 3           # failed attempts per issue before a human must
                            # re-label (or `/retry` to reset the budget)
 max_per_day = 0            # per-issue daily attempt cap; 0 = unlimited. Bounds

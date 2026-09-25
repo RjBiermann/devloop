@@ -62,6 +62,9 @@ class Pipeline:
     max_attempts: int = 3  # failures allowed per issue before it needs a human re-label
     max_per_day: int = 0   # per-issue daily attempt cap; 0 = unlimited (runaway detection)
     max_parallel: int = 1  # concurrent builds; 1 = serial, zero conflicts by construction
+    # issue comments fed into the build prompt (count cap; 0 = off). Access-gated:
+    # only authors who could fire a command enter the prompt, untrusted-framed.
+    prompt_comments: int = 10
 
 
 @dataclass

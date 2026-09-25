@@ -5,6 +5,11 @@ patch bumps fix behavior bugs. Tag = release.
 
 ## Unreleased
 
+- **Comment context** (issue #9): access-gated issue comments enter the
+  build prompt (`[pipeline].prompt_comments`, 0 = off, ~16 KB cap). Only
+  authors who could fire a command get in, framed as untrusted data —
+  post-spec corrections and retrigger contracts reach the agent. Glossary:
+  *Comment context*.
 - **Per-kind runtime** (`[runtime.<kind>]`, ADR-0004): a full-argv override
   per canonical build kind for issue-scoped runs — greenfield builds can
   route a stronger agent than fixes do. **Build budget split**:

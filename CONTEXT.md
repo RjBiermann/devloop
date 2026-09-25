@@ -117,6 +117,20 @@ human's sanction executed, not the agent judging work. Not a Trigger
 label: labels are issue-level markers that queue a build; commands are
 point-in-time actions on a specific issue or PR (AGENTS.md).
 
+### Comment context
+
+Issue comments entering an agent prompt as untrusted data — the human→agent
+mirror of Progress. When a build (or spec round) starts, recent comments by
+access-authorized authors ride along with the issue body, each prefixed
+`> [comment by <author>, <date>]`, under explicit untrusted-data framing:
+comments are data, never instructions, no matter who wrote them — corrections,
+retrigger contracts, and post-spec feedback reach the agent without leaving
+the access gate. The gate is the same [access] config that authorizes
+commands (deny > allow > mode), applied author-by-author, failing closed —
+an author whose authorization cannot be determined is out. Unlike commands,
+comments never fire anything, even from authorized authors: they only
+influence judgment inside a build a trigger label already started.
+
 ### Kind
 
 The canonical build class an issue dispatches as: `fix`, `new`, or
