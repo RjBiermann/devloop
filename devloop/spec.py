@@ -7,6 +7,7 @@ counterpart of the ledger protocol (no extra state anywhere).
 """
 
 from .config import Config
+from .core import COMMENT_FRAME, comment_block
 from .forge import Forge
 from .runtime import AgentRuntime
 
@@ -80,10 +81,17 @@ def process_spec(cfg: Config, forge: Forge, runtime: AgentRuntime, number: int) 
     # the build budget — greenfield specs outgrow `timeout` too
     kind = cfg.kind_for(issue.labels)
     agent = cfg.runtime.for_kind(kind) or runtime
+    # conversation context through the same seam as builds (#11): gated,
+    # untrusted-framed, bounded — plus the pipeline's OWN comments, which
+    # the gate would otherwise hide and the agent cannot work without
+    # (its clarify questions and decision record live in them)
+    block = comment_block(comments, cfg.access, forge,
+                          cap=cfg.pipeline.prompt_comments,
+                          include={forge.whoami()})
     prompt = (
         f"You are refining a spec for issue #{number}. Do NOT write code.\n\n"
         f"## Issue #{number}: {issue.title}\n{issue.body}\n\n"
-        f"## Conversation so far\n" + "\n---\n".join(c.body for c in comments) + "\n\n"
+        + (f"{COMMENT_FRAME}\n\n{block}\n\n" if block else "")
         + SPEC_INSTRUCTIONS[phase]
     )
     res = agent.run(prompt, cwd=".", timeout=cfg.pipeline.build_timeout)

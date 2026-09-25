@@ -55,40 +55,46 @@ COMMENT_FRAME = (
 COMMENT_CAP = 16000
 
 
-def comment_block(comments, access, forge, cap: int = 10, size: int = COMMENT_CAP) -> str:
+def comment_block(comments, access, forge, cap: int = 10,
+                  size: int = COMMENT_CAP, include: set[str] | None = None) -> str:
     """Access-gated, bounded comment block for an agent prompt — the shared
     seam between the build flow (core.process_issue) and the spec loop.
     Only comment authors who could fire a command (config [access], deny >
     allow > mode) enter the prompt; last `cap` kept, oldest dropped, ~16 KB
-    size cap; each line prefixed `> [comment by <author>, <date>]`. Returns
-    '' when nothing qualifies — the caller omits the block entirely.
+    size cap; each comment prefixed `> [comment by <author>, <date>]` with
+    the body blockquoted line-per-line. Returns '' when nothing qualifies —
+    the caller omits the block entirely.
     Fails closed: an author whose authorization cannot be determined (a role
     probe raising, e.g. the base class's own role methods) is UNAUTHORIZED,
-    never fail-open into a prompt."""
+    never fail-open into a prompt. `include` names authors always admitted
+    despite the gate — the spec loop passes the pipeline's own identity so
+    the agent keeps its own clarify questions and decision record (builds
+    pass nothing: the #9 decision — bot narration is not spec history)."""
+    if cap <= 0:  # 0 = off (note: [-0:] would keep everything — guard it)
+        return ""
+    include = {a.lower() for a in (include or ())}
+
     def authorized(author: str) -> bool:
+        if author.lower() in include:
+            return True  # own narration: the pipeline's record of itself
         try:
             return forge.is_authorized(author, access)
         except Exception:  # role probe unavailable → deny (fail closed)
             return False
-    if cap <= 0:  # 0 = off (note: [-0:] would keep everything — guard it)
-        return ""
     gated = [c for c in comments if authorized(c.author)]
     if not gated:
         return ""
     gated = gated[-cap:]
-    lines = [f"> [comment by {c.author}, {c.date or 'date unknown'}] "
-             + c.body.strip().replace("\n", " ") for c in gated]
-    if len("\n".join(lines).encode()) > size:
-        # ponytail: linear re-scan for the size fit; fine at cap ≤ 10 — a
-        # binary search or per-comment byte accounting is over-engineering
-        for i in range(len(lines)):
-            if len("\n".join(lines[i:]).encode()) <= size:
-                lines = lines[i:]
-                break
-        else:
-            lines = [lines[-1][:500]]  # never a silent total drop: the
-            # agent sees *something* recent, else nothing at all
-    return "\n".join(lines)
+    parts = []
+    for c in gated:
+        head = f"> [comment by {c.author}, {c.date or 'date unknown'}]"
+        body = c.body.strip()
+        parts.append(head if not body else head + "\n" +
+                     "\n".join("> " + ln for ln in body.splitlines()))
+    while len("\n\n".join(parts).encode()) > size and len(parts) > 1:
+        parts.pop(0)  # drop oldest first — the newest carry the corrections
+    block = "\n\n".join(parts)
+    return block if len(block.encode()) <= size else block[:size] + "\n> …"
 
 
 # Agent narration: the orchestrator brackets a run (build-started heartbeat,
