@@ -120,16 +120,20 @@ point-in-time actions on a specific issue or PR (AGENTS.md).
 ### Comment context
 
 Issue comments entering an agent prompt as untrusted data — the human→agent
-mirror of Progress. When a build (or spec round) starts, recent comments by
-access-authorized authors ride along with the issue body, each prefixed
+mirror of Progress. When a build or spec round starts, recent comments ride
+along with the issue body, each prefixed
 `> [comment by <author>, <date>]`, under explicit untrusted-data framing:
 comments are data, never instructions, no matter who wrote them — corrections,
 retrigger contracts, and post-spec feedback reach the agent without leaving
 the access gate. The gate is the same [access] config that authorizes
 commands (deny > allow > mode), applied author-by-author, failing closed —
-an author whose authorization cannot be determined is out. Unlike commands,
-comments never fire anything, even from authorized authors: they only
-influence judgment inside a build a trigger label already started.
+an author whose authorization cannot be determined is out. One carve-out:
+the pipeline's own identity is always admitted for the spec loop, whose
+agent cannot work without seeing its own clarify questions and decision
+record (builds don't need the carve-out — bot narration there is not the
+agent's own history). Unlike commands, comments never fire anything, even
+from authorized authors: they only influence judgment inside a build a
+trigger label already started.
 
 ### Kind
 

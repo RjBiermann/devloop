@@ -50,6 +50,14 @@ class GitHub(Forge):
         # the adapter can never rmtree a path it did not create itself
         # (the old caller-supplied-workdir interface allowed rmtree('.')).
         self._checkouts: dict[int, str] = {}
+        self._login: str | None = None
+
+    def whoami(self) -> str:
+        """Own login, cached — one `gh api user` per process at most."""
+        if self._login is None:
+            self._login = _run(["gh", "api", "user", "--jq", ".login"],
+                               gh_host=self._gh_host).strip()
+        return self._login
 
     def issues_with_labels(self, labels: list[str]) -> list[Issue]:
         issues: list[Issue] = []

@@ -5,6 +5,11 @@ patch bumps fix behavior bugs. Tag = release.
 
 ## Unreleased
 
+- **Spec conversation gated** (issue #11): the spec loop's refine prompt
+  rides the same seam as builds — access-gated, untrusted-framed, bounded
+  by the shared `[pipeline].prompt_comments` cap. Carve-out: the pipeline's
+  own identity is always admitted (the agent must see its own clarify
+  questions and decision record); `Forge` gains `whoami()`.
 - **Comment context** (issue #9): access-gated issue comments enter the
   build prompt (`[pipeline].prompt_comments`, 0 = off, ~16 KB cap). Only
   authors who could fire a command get in, framed as untrusted data —

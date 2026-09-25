@@ -74,6 +74,14 @@ class Forge:
         pending, see MILESTONES) must implement it before shipping."""
         raise NotImplementedError
 
+    def whoami(self) -> str:
+        """The forge identity devloop's own comments are posted under. The
+        spec loop needs it: the agent must see its own clarify questions
+        and decision record even when the bot identity isn't in [access]
+        (usually it isn't — the bot is the least trusted author, and still
+        the only author of the spec's own history)."""
+        raise NotImplementedError
+
     # --- write side ------------------------------------------------------
     def start_work(self, number: int, branch: str) -> str:
         """Create `branch` from the default branch in a private checkout
