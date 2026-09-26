@@ -56,7 +56,7 @@ COMMENT_CAP = 16000
 
 
 def comment_block(comments, access, forge, cap: int = 10,
-                  size: int = COMMENT_CAP, include: set[str] | None = None) -> str:
+                  include: set[str] | None = None) -> str:
     """Access-gated, bounded comment block for an agent prompt — the shared
     seam between the build flow (build.process_issue) and the spec loop.
     Only comment authors who could fire a command (config [access], deny >
@@ -91,10 +91,10 @@ def comment_block(comments, access, forge, cap: int = 10,
         body = c.body.strip()
         parts.append(head if not body else head + "\n" +
                      "\n".join("> " + ln for ln in body.splitlines()))
-    while len("\n\n".join(parts).encode()) > size and len(parts) > 1:
+    while len("\n\n".join(parts).encode()) > COMMENT_CAP and len(parts) > 1:
         parts.pop(0)  # drop oldest first — the newest carry the corrections
     block = "\n\n".join(parts)
-    return block if len(block.encode()) <= size else block[:size] + "\n> …"
+    return block if len(block.encode()) <= COMMENT_CAP else block[:COMMENT_CAP] + "\n> …"
 
 
 # Agent narration: the orchestrator brackets a run (build-started heartbeat,

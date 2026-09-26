@@ -8,6 +8,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from devloop import ledger as _ledger
+import devloop.build as build
+import devloop.core as core
 from devloop.config import Access, Config, Labels, Pipeline
 from devloop.forge.base import Comment, Forge, Issue
 from devloop.guardrails import GuardrailViolation
@@ -188,8 +190,6 @@ def test_trigger_labels_are_mutually_exclusive():
 def test_queue_full_starts_nothing():
     """Serial builds: with max_parallel=1 and one devloop PR open, no new
     builds start — conflicts are prevented by construction, not merged."""
-    import devloop.build as build
-    import devloop.core as core
     from devloop.config import Config
     from devloop.core import run_once
 
@@ -333,8 +333,6 @@ class FlowForge(Forge):
 def test_parallel_builds_get_distinct_worktrees():
     """max_parallel=2 with an empty queue: two builds run concurrently, each
     in its own worktree — agents must never share a working tree."""
-    import devloop.build as build
-    import devloop.core as core
     from devloop.config import Config
 
     forge = FlowForge()
@@ -441,8 +439,6 @@ def _cmd_forge(auth_ok=True):
 
 
 def test_failure_budget_resets_on_retry():
-    import devloop.build as build
-    import devloop.core as core
     from devloop import ledger
 
     forge = _cmd_forge()
@@ -532,8 +528,6 @@ def test_ledger_producer_and_parser_agree():
 
 
 def test_review_rounds_carry_prior_findings():
-    import devloop.build as build
-    import devloop.core as core
     from devloop.config import Config
 
     forge = _cmd_forge()
@@ -613,8 +607,6 @@ def test_repair_pushes_gates_and_verifies():
 def test_repair_command_runs_review_then_repair():
     """`/repair <pr>`: devloop-PR gate, re-review for fresh findings, then
     repair in a fresh checkout; nothing-to-fix and foreign PR refuse."""
-    import devloop.build as build
-    import devloop.core as core
     from devloop.forge.base import OpenPR
 
     calls, pushed = [], []
@@ -664,8 +656,6 @@ def test_repair_command_runs_review_then_repair():
 
 def test_build_flow_hands_review_findings_to_repair():
     """LGTM review → no repair; findings + repair_rounds → repair runs."""
-    import devloop.build as build
-    import devloop.core as core
 
     calls = []
 
@@ -708,8 +698,6 @@ def test_braced_issue_body_and_cleanup_on_failure():
     """Braces in an issue body are data, not format fields (the .format()
     crash is a regression); and finish_work runs even when the agent run
     explodes mid-build."""
-    import devloop.build as build
-    import devloop.core as core
     from devloop.config import Config
     from devloop.forge.base import Issue
 
@@ -810,8 +798,6 @@ def test_prompt_includes_authorized_issue_comments():
     """Issue comments reach the build prompt — access-gated (authorized
     authors only), bounded (last N), untrusted-framed (issue #9: agents
     were blind to post-spec corrections and filed duplicates)."""
-    import devloop.build as build
-    import devloop.core as core
     from devloop.config import Config, Pipeline
     from devloop.forge.base import Comment, Issue
 
@@ -869,8 +855,6 @@ def test_prompt_includes_authorized_issue_comments():
 
 
 def test_comment_commands():
-    import devloop.build as build
-    import devloop.core as core
     from devloop.config import Config
 
     cfg = Config(repo="o/r")
@@ -894,7 +878,7 @@ def test_comment_commands():
     # /retry closes the stale PR and re-fires the build — injected, not patched
     assert build.handle_command(cfg, forge, R(), "boss", "/retry 9", 1,
                                 build=lambda cfg, f, r, issue:
-                                    (forge.built.append(issue.number), None)[1]) == "retried issue #9"
+                                    forge.built.append(issue.number)) == "retried issue #9"
     assert forge.closed and forge.closed[0][0] == 55
     # unknown command
     assert build.handle_command(cfg, forge, R(), "boss", "/merge everything", 9) == "ignored:unknown"
@@ -947,8 +931,6 @@ def test_commit_all_counts_pushed_ahead_as_delivered():
 def test_rebase_stage_rebases_clean_and_rebuilds_conflicts():
     """Pipeline upkeep: open devloop PRs get rebased onto main silently;
     a conflicting PR is closed with a rebuild note (counts as an attempt)."""
-    import devloop.build as build
-    import devloop.core as core
 
     class RebaseForge(FlowForge):
         def __init__(self, conflict):
@@ -990,8 +972,6 @@ def test_rebase_branch_infra_error_skips_head():
     missing ref — anything that raises) must NOT close the PR or burn an
     attempt; that path is for real conflicts only. The head is skipped
     loudly and the sweep moves on."""
-    import devloop.build as build
-    import devloop.core as core
 
     class BoomForge(FlowForge):
         def __init__(self):
@@ -1093,8 +1073,6 @@ def test_issue_scoped_runs_use_build_budget():
     """Issue-scoped runs (build) get build_timeout; PR-scoped runs (review)
     keep timeout — greenfield builds are a different magnitude than reviews.
     Spec runs (also issue-scoped) share the build budget."""
-    import devloop.build as build
-    import devloop.core as core
     from devloop.review import review_pr
 
     cfg = Config(repo="o/r", pipeline=Pipeline(review_rounds=1))
@@ -1161,8 +1139,6 @@ def test_kind_runtime_config_parsing():
 def test_build_flow_uses_kind_runtime():
     """A [runtime.<kind>] override replaces the global runtime for that
     kind's build run; the heartbeat reports the agent actually run."""
-    import devloop.build as build
-    import devloop.core as core
     from devloop.config import Runtime
 
     class F(Forge):
@@ -1259,8 +1235,6 @@ def test_daily_budget_cap_blocks_runaway_issue():
     """max_per_day: an issue that failed N times today gets skipped (loudly)
     until tomorrow; other issues still build. Reads the ledger, no state."""
     import datetime
-    import devloop.build as build
-    import devloop.core as core
     from devloop import ledger
 
     today = f"{ledger.DAY} {datetime.date.today().isoformat()}"
@@ -1529,8 +1503,6 @@ def test_ledger_ignores_spoofed_markers():
 def test_build_prompts_carry_progress_narration():
     """Every kind's prompt carries the progress instruction, and per-repo
     guidance (skills/progress/SKILL.md) is appended when present."""
-    import devloop.build as build
-    import devloop.core as core
     from devloop.forge.base import Issue
 
     class F(Forge):
@@ -1641,8 +1613,6 @@ def test_forge_conformance():
 def test_merged_pr_completes_issue():
     """A human-merged devloop PR closes its issue — executing the human's
     merge sanction (same carve-out as close_pr), on the ledger record."""
-    import devloop.build as build
-    import devloop.core as core
     from devloop.config import Config
     from devloop.forge.base import Comment
 
