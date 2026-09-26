@@ -20,10 +20,30 @@ from .forge import Forge, Issue
 log = logging.getLogger(__name__)
 
 
+def _select(cfg: Config, forge: Forge, heads: set[str]):
+    """One pass of the queue decision, shared by next_builds (executes it)
+    and status_lines (reports it) — one policy, so `devloop status` can
+    never disagree with what the next sweep would do. Yields
+    (issue, verdict, detail); verdict in {'delivered', 'budget', 'daily',
+    'start'}; detail is the human-readable why, reused as the log line."""
+    for issue in forge.issues_with_labels(cfg.labels.triggers):
+        if forge.branch_for(issue.number) in heads:
+            yield issue, "delivered", "already delivered"
+        else:
+            attempts, today = ledger.budget(forge, issue)
+            if attempts >= cfg.pipeline.max_attempts:
+                yield issue, "budget", (f"budget exhausted "
+                                        f"({attempts}/{cfg.pipeline.max_attempts}) — re-label or /retry")
+            elif cfg.pipeline.max_per_day and today >= cfg.pipeline.max_per_day:
+                yield issue, "daily", f"daily cap reached ({today}/{cfg.pipeline.max_per_day})"
+            else:
+                yield issue, "start", f"WOULD START (attempt {attempts + 1}/{cfg.pipeline.max_attempts})"
+
+
 def status_lines(cfg: Config, forge: Forge) -> list[str]:
     """Read-only queue preview for `devloop status` — the same decisions
-    next_builds() makes, reported instead of executed. No forge writes,
-    no agent runs."""
+    next_builds() makes (via _select), reported instead of executed.
+    No forge writes, no agent runs."""
     log.info("status: forge %s", cfg.repo)
     prs = forge.open_devloop_prs()
     lines = [f"open devloop PRs: {len(prs)}"]
@@ -37,22 +57,9 @@ def status_lines(cfg: Config, forge: Forge) -> list[str]:
     lines.append(f"free build slots: {slots}/{cfg.pipeline.max_parallel}")
     lines.append("would start now:")
     started = False
-    for issue in forge.issues_with_labels(cfg.labels.triggers):
-        if forge.branch_for(issue.number) in {p.head for p in prs}:
-            lines.append(f"  #{issue.number} {issue.title} — already delivered")
-            continue
-        attempts, today = ledger.budget(forge, issue)
-        if attempts >= cfg.pipeline.max_attempts:
-            lines.append(f"  #{issue.number} {issue.title} — budget exhausted "
-                         f"({attempts}/{cfg.pipeline.max_attempts}), re-label or /retry")
-            continue
-        if cfg.pipeline.max_per_day and today >= cfg.pipeline.max_per_day:
-            lines.append(f"  #{issue.number} {issue.title} — daily cap reached "
-                         f"({today}/{cfg.pipeline.max_per_day})")
-            continue
-        lines.append(f"  #{issue.number} {issue.title} — WOULD START (attempt "
-                     f"{attempts + 1}/{cfg.pipeline.max_attempts})")
-        started = True
+    for issue, verdict, detail in _select(cfg, forge, {p.head for p in prs}):
+        lines.append(f"  #{issue.number} {issue.title} — {detail}")
+        started |= verdict == "start"
     if not started:
         lines[-1] = "would start now: nothing"
     return lines
@@ -74,25 +81,16 @@ def next_builds(cfg: Config, forge: Forge) -> list[Issue]:
                     "merge/close the open devloop PR(s) or raise pipeline.max_parallel",
                     len(prs), ', '.join(p.head for p in prs))
         return []
-    delivered = {p.head for p in prs}
-    candidates = []
-    for issue in forge.issues_with_labels(cfg.labels.triggers):
-        if forge.branch_for(issue.number) in delivered:
-            log.info("#%d: skipped — already delivered (%s open)", issue.number,
+    candidates: list[Issue] = []
+    for issue, verdict, detail in _select(cfg, forge, {p.head for p in prs}):
+        if verdict == "start":
+            log.info("#%d: starting build — %s", issue.number, detail.lower())
+            candidates.append(issue)
+            if len(candidates) >= slots:
+                break
+        elif verdict == "delivered":
+            log.info("#%d: skipped — %s (%s open)", issue.number, detail,
                      forge.branch_for(issue.number))
-            continue
-        attempts, today = ledger.budget(forge, issue)
-        if attempts >= cfg.pipeline.max_attempts:
-            log.warning("#%d: %d failed attempts — skipped; re-label to retry",
-                        issue.number, attempts)
-            continue
-        if cfg.pipeline.max_per_day and today >= cfg.pipeline.max_per_day:
-            log.warning("#%d: daily cap reached (%d) — skipped until tomorrow",
-                        issue.number, cfg.pipeline.max_per_day)
-            continue
-        log.info("#%d: starting build (attempt %d/%d)", issue.number,
-                 attempts + 1, cfg.pipeline.max_attempts)
-        candidates.append(issue)
-        if len(candidates) >= slots:
-            break
+        else:
+            log.warning("#%d: skipped — %s", issue.number, detail)
     return candidates

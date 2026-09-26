@@ -1431,7 +1431,7 @@ def test_skip_reasons_are_logged():
                                   attempts={1: 3}))
         text = "\n".join(records)
         assert "#2" in text and "already delivered" in text
-        assert "#1" in text and "failed attempts" in text
+        assert "#1" in text and "budget exhausted" in text
         records.clear()
 
         # daily-cap skip
