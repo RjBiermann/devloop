@@ -1297,6 +1297,16 @@ def test_github_adapter_carries_base_url_to_gh():
 
 
 def test_version_bump():
+    # --version is derived, never a stale literal: the installed metadata or
+    # the checkout's pyproject (the file CI bumps, ADR-0002) — probe the
+    # pyproject path directly; metadata and checkout may legally differ
+    import tomllib
+    from devloop.version import release_version
+    v = release_version(Path(__file__).resolve().parent.parent / "pyproject.toml")
+    assert v == tomllib.loads(
+        (Path(__file__).resolve().parent.parent / "pyproject.toml").read_text()
+    )["project"]["version"]
+
     from devloop.version import next_version
     assert next_version("v0.3.0") == "v0.3.1"
     assert next_version("v0.3.0", minor=True) == "v0.4.0"

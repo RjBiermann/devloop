@@ -1,4 +1,4 @@
-"""Version bump for release tagging: latest tag -> next tag.
+"""Version truth and release bumping: latest tag -> next tag.
 
 Patch by default; `--minor` when the human declares it in the merge commit
 subject. Majors are always manual (see docs/adr/0002-tag-every-merge.md).
@@ -6,9 +6,23 @@ subject. Majors are always manual (see docs/adr/0002-tag-every-merge.md).
 
 import re
 import sys
+import tomllib
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
 from pathlib import Path
 
 _PYPROJECT = Path("pyproject.toml")
+
+
+def release_version(pyproject: Path | None = None) -> str:
+    """The number `--version` shows, derived — never a hardcoded literal:
+    the installed distribution's metadata when pip is in play, else the
+    checkout's pyproject.toml (the one file CI bumps, ADR-0002)."""
+    if pyproject is None:
+        try:
+            return _pkg_version("devloop")
+        except PackageNotFoundError:
+            pyproject = Path(__file__).resolve().parent.parent / _PYPROJECT.name
+    return tomllib.loads(pyproject.read_text())["project"]["version"]
 
 
 def next_version(tag: str, minor: bool = False) -> str:

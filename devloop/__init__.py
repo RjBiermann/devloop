@@ -1,3 +1,5 @@
 """devloop: human spec, AI build, human merge."""
 
-__version__ = "0.3.5"
+from .version import release_version
+
+__version__ = release_version()
