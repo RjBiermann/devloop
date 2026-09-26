@@ -6,9 +6,10 @@ history read through the `devloop: status=` marker — the spec-loop
 counterpart of the ledger protocol (no extra state anywhere).
 """
 
+from .build import COMMENT_FRAME, comment_block
 from .config import Config
-from .core import COMMENT_FRAME, comment_block
 from .forge import Forge
+from .rounds import substitute
 from .runtime import AgentRuntime
 
 MARKER = "devloop: status="
@@ -88,12 +89,12 @@ def process_spec(cfg: Config, forge: Forge, runtime: AgentRuntime, number: int) 
     block = comment_block(comments, cfg.access, forge,
                           cap=cfg.pipeline.prompt_comments,
                           include={forge.whoami()})
-    prompt = (
-        f"You are refining a spec for issue #{number}. Do NOT write code.\n\n"
-        f"## Issue #{number}: {issue.title}\n{issue.body}\n\n"
-        + (f"{COMMENT_FRAME}\n\n{block}\n\n" if block else "")
-        + SPEC_INSTRUCTIONS[phase]
-    )
+    prompt = substitute(
+        "You are refining a spec for issue #{number}. Do NOT write code.\n\n"
+        "## Issue #{number}: {title}\n{body}\n\n"
+        + (COMMENT_FRAME + "\n\n" + block + "\n\n" if block else "")
+        + SPEC_INSTRUCTIONS[phase],
+        number=str(number), title=issue.title, body=issue.body)
     res = agent.run(prompt, cwd=".", timeout=cfg.pipeline.build_timeout)
     forge.comment(number, res.output.strip())
     return parse_status(res.output) or phase

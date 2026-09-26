@@ -11,7 +11,8 @@ from pathlib import Path
 
 from . import __version__
 from .config import load
-from .core import handle_command, handle_merge, run_once
+from .build import handle_command, handle_merge
+from .core import run_once
 from .forge import get_forge
 from .queue import status_lines
 from .review import review_pr

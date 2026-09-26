@@ -14,7 +14,7 @@ to repair.
 from .config import Config
 from .delivery import issue_of_body
 from .forge import Forge, Issue
-from .rounds import is_lgtm, run_round, with_repo_guidance
+from .rounds import is_lgtm, run_round, substitute, with_repo_guidance
 from .runtime import AgentRuntime
 
 REVIEW_PROMPT = (
@@ -33,14 +33,10 @@ REVIEW_PROMPT = (
 def review_prompt(cfg: Config, issue_title: str = "", issue_body: str = "") -> str:
     """Fully substituted review prompt: base template + repo-specific
     guidance from skills/pre-review/SKILL.md (the customization point) +
-    the spec issue. Substitution is replace-based, not .format — injected
-    content (issue bodies, diffs) may contain braces."""
+    the spec issue. {diff} stays — review_pr injects it per round."""
     prompt = with_repo_guidance(REVIEW_PROMPT, "skills/pre-review/SKILL.md",
                                 "Repo-specific review guidance")
-    return (prompt
-            .replace("{issue_title}", issue_title)
-            .replace("{issue_body}", issue_body))
-    # {diff} stays — review_pr injects it per round
+    return substitute(prompt, issue_title=issue_title, issue_body=issue_body)
 
 
 def review_pr(cfg: Config, forge: Forge, runtime: AgentRuntime, pr_number: int,

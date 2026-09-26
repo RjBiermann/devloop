@@ -125,19 +125,13 @@ def test_run_once_skips_issues_with_open_pr():
     forge = FakeForge()
 
     # process_issue calls the git-side methods; only stub what skip-logic needs
-    import devloop.core as core
-
-    orig = core.process_issue
-
-    def spy(cfg, forge, runtime, issue, workdir=None):
-        processed.append((issue.number, workdir))
+    # build step injected through one argument — the run_build seam, not a
+    # module monkey-patch
+    def spy_build(cfg, forge, runtime, issue):
+        processed.append((issue.number, None))
         return type("O", (), {"issue": issue.number, "branch": "", "delivered": True, "gate": True})()
 
-    core.process_issue = spy
-    try:
-        run_once(cfg, FakeForge(), FakeRuntime())
-    finally:
-        core.process_issue = orig
+    run_once(cfg, FakeForge(), FakeRuntime(), build=spy_build)
     assert [n for n, _ in processed] == [2]  # #1 skipped: PR already open
 
 
@@ -194,6 +188,7 @@ def test_trigger_labels_are_mutually_exclusive():
 def test_queue_full_starts_nothing():
     """Serial builds: with max_parallel=1 and one devloop PR open, no new
     builds start — conflicts are prevented by construction, not merged."""
+    import devloop.build as build
     import devloop.core as core
     from devloop.config import Config
     from devloop.core import run_once
@@ -338,6 +333,7 @@ class FlowForge(Forge):
 def test_parallel_builds_get_distinct_worktrees():
     """max_parallel=2 with an empty queue: two builds run concurrently, each
     in its own worktree — agents must never share a working tree."""
+    import devloop.build as build
     import devloop.core as core
     from devloop.config import Config
 
@@ -445,6 +441,7 @@ def _cmd_forge(auth_ok=True):
 
 
 def test_failure_budget_resets_on_retry():
+    import devloop.build as build
     import devloop.core as core
     from devloop import ledger
 
@@ -535,6 +532,7 @@ def test_ledger_producer_and_parser_agree():
 
 
 def test_review_rounds_carry_prior_findings():
+    import devloop.build as build
     import devloop.core as core
     from devloop.config import Config
 
@@ -615,6 +613,7 @@ def test_repair_pushes_gates_and_verifies():
 def test_repair_command_runs_review_then_repair():
     """`/repair <pr>`: devloop-PR gate, re-review for fresh findings, then
     repair in a fresh checkout; nothing-to-fix and foreign PR refuse."""
+    import devloop.build as build
     import devloop.core as core
     from devloop.forge.base import OpenPR
 
@@ -629,15 +628,15 @@ def test_repair_command_runs_review_then_repair():
     def fake_repair(cfg, forge, runtime, pr, branch, workdir, t, b, findings):
         calls.append(("repair", pr, branch, workdir, findings))
 
-    review_pr, repair_pr = core.review_pr, core.repair_pr
-    core.review_pr, core.repair_pr = fake_review, fake_repair
+    review_pr, repair_pr = build.review_pr, build.repair_pr
+    build.review_pr, build.repair_pr = fake_review, fake_repair
     try:
         runtime = type("R", (), {"name": "fake"})()
         cfg = Config(repo="o/r", access=Access(allow=["boss"]))
         # not a devloop PR → refused, no review run
         f = _cmd_forge()
         f.open_devloop_prs = lambda: []
-        assert core.handle_command(cfg, f, runtime, "boss", "/repair 55", 9) == "ignored:not-devloop"
+        assert build.handle_command(cfg, f, runtime, "boss", "/repair 55", 9) == "ignored:not-devloop"
         assert calls == []
         # LGTM re-review → no repair run, comment says nothing to fix
         f = _cmd_forge()
@@ -645,26 +644,27 @@ def test_repair_command_runs_review_then_repair():
         f.open_devloop_prs = lambda: [OpenPR(55, "devloop/issue-9", [])]
         f.start_work = lambda *a, **k: "/fake/wt"
         f.finish_work = lambda *a, **k: pushed.append(("finish", a[0]))
-        assert core.handle_command(cfg, f, runtime, "boss", "/repair 55", 9) == "repaired PR #55"
+        assert build.handle_command(cfg, f, runtime, "boss", "/repair 55", 9) == "repaired PR #55"
         assert calls == ["review"] and "nothing to fix" in f.notes[-1][1]
         # findings → repair with the issue's branch and a fresh checkout
         f = _cmd_forge()
         f.start_work = lambda *a, **k: "/fake/wt"
         f.finish_work = lambda *a, **k: pushed.append(("finish", a[0]))
-        assert core.handle_command(cfg, f, runtime, "boss", "/repair 55", 9) == "repaired PR #55"
+        assert build.handle_command(cfg, f, runtime, "boss", "/repair 55", 9) == "repaired PR #55"
         assert calls[-1] == ("repair", 55, "devloop/issue-9", "/fake/wt", "P1: wrong")
         assert pushed == [("finish", 9)]  # checkout bracket closed
         # repair_rounds = 0 → refused before any review spend
         calls.clear()
-        assert core.handle_command(Config(repo="o/r", pipeline=Pipeline(review_rounds=2, repair_rounds=0)),
+        assert build.handle_command(Config(repo="o/r", pipeline=Pipeline(review_rounds=2, repair_rounds=0)),
                                    _cmd_forge(), runtime, "boss", "/repair 55", 9) == "ignored:repair-disabled"
         assert calls == []
     finally:
-        core.review_pr, core.repair_pr = review_pr, repair_pr
+        build.review_pr, build.repair_pr = review_pr, repair_pr
 
 
 def test_build_flow_hands_review_findings_to_repair():
     """LGTM review → no repair; findings + repair_rounds → repair runs."""
+    import devloop.build as build
     import devloop.core as core
 
     calls = []
@@ -675,8 +675,8 @@ def test_build_flow_hands_review_findings_to_repair():
 
     def fake_repair(cfg, forge, runtime, pr, branch, workdir, t, b, findings):
         calls.append(("repair", findings))
-    review_pr, repair_pr = core.review_pr, core.repair_pr
-    core.review_pr, core.repair_pr = fake_review, fake_repair
+    review_pr, repair_pr = build.review_pr, build.repair_pr
+    build.review_pr, build.repair_pr = fake_review, fake_repair
     try:
         runtime = type("R", (), {"name": "fake",
             "run": lambda self, *a, **k: type("Res", (), {"ok": True, "output": "work"})()})()
@@ -687,16 +687,28 @@ def test_build_flow_hands_review_findings_to_repair():
             forge.commit_all = lambda msg, workdir: True
             issue = forge.issue(9)
             issue.title = title
-            core.process_issue(Config(repo="o/r"), forge, runtime, issue, workdir="wt")
+            build.process_issue(Config(repo="o/r"), forge, runtime, issue, workdir="wt")
     finally:
-        core.review_pr, core.repair_pr = review_pr, repair_pr
+        build.review_pr, build.repair_pr = review_pr, repair_pr
     assert calls == [("review", "finds"), ("repair", "P1: wrong"), ("review", "lgtm")]
+
+
+def test_prompt_substitution_is_one_policy():
+    """The substitution seam (rounds.substitute): every prompt module goes
+    through it — braced injected content survives, unfilled placeholders
+    stay for per-round injection (the diff)."""
+    from devloop.rounds import substitute
+
+    out = substitute("## {title}\n{body} [x] => {diff}",
+                     title="t {'a': 1} {injected}", body="b {y}")
+    assert out == "## t {'a': 1} {injected}\nb {y} [x] => {diff}"  # braces are data
 
 
 def test_braced_issue_body_and_cleanup_on_failure():
     """Braces in an issue body are data, not format fields (the .format()
     crash is a regression); and finish_work runs even when the agent run
     explodes mid-build."""
+    import devloop.build as build
     import devloop.core as core
     from devloop.config import Config
     from devloop.forge.base import Issue
@@ -732,7 +744,7 @@ def test_braced_issue_body_and_cleanup_on_failure():
 
     # braces survive substitution; the Forge-allocated cwd reaches the agent
     f, r = F(), R()
-    core.process_issue(cfg, f, r, issue)
+    build.process_issue(cfg, f, r, issue)
     assert "{'a': 1}" in r.prompt  # body braces intact — .format() would crash
     assert r.cwd == "/fake/wt-5"
     assert f.prs == ["devloop/issue-5"]
@@ -740,7 +752,7 @@ def test_braced_issue_body_and_cleanup_on_failure():
 
     # agent run explodes → failure posted to the issue AND checkout cleaned up
     f2, b = F(), R(boom=True)
-    out = core.process_issue(cfg, f2, b, issue)
+    out = build.process_issue(cfg, f2, b, issue)
     assert not out.agent_ok
     assert any("agent run FAILED" in n for n in f2.notes)
     assert f2.finished == [5]
@@ -798,6 +810,7 @@ def test_prompt_includes_authorized_issue_comments():
     """Issue comments reach the build prompt — access-gated (authorized
     authors only), bounded (last N), untrusted-framed (issue #9: agents
     were blind to post-spec corrections and filed duplicates)."""
+    import devloop.build as build
     import devloop.core as core
     from devloop.config import Config, Pipeline
     from devloop.forge.base import Comment, Issue
@@ -835,7 +848,7 @@ def test_prompt_includes_authorized_issue_comments():
                 Comment("dev", "retrigger contract: findings A and B are new",
                         "2026-09-26T10:00:00Z")]
     r = R()
-    core.process_issue(cfg, F(comments), r, Issue(9, "t9", "body", ["ai-fix"]))
+    build.process_issue(cfg, F(comments), r, Issue(9, "t9", "body", ["ai-fix"]))
     assert "[comment by dev, 2026-09-26T10:00:00Z]" in r.prompt
     assert "retrigger contract" in r.prompt
     assert "untrusted" in r.prompt
@@ -844,18 +857,19 @@ def test_prompt_includes_authorized_issue_comments():
     # truncation: 30 comments, default cap 10 → only the newest 10 survive
     many = [Comment("dev", f"c{i}") for i in range(30)]
     r2 = R()
-    core.process_issue(cfg, F(many), r2, Issue(9, "t9", "", ["ai-fix"]))
+    build.process_issue(cfg, F(many), r2, Issue(9, "t9", "", ["ai-fix"]))
     assert r2.prompt.count("[comment by dev") == 10
     assert "c19" not in r2.prompt and "c20" in r2.prompt and "c29" in r2.prompt
 
     # prompt_comments = 0 → body-only prompt (feature off)
     cfg0 = Config(repo="o/r", pipeline=Pipeline(review_rounds=0, prompt_comments=0))
     r3 = R()
-    core.process_issue(cfg0, F(many), r3, Issue(9, "t9", "", ["ai-fix"]))
+    build.process_issue(cfg0, F(many), r3, Issue(9, "t9", "", ["ai-fix"]))
     assert "[comment by" not in r3.prompt
 
 
 def test_comment_commands():
+    import devloop.build as build
     import devloop.core as core
     from devloop.config import Config
 
@@ -868,25 +882,22 @@ def test_comment_commands():
             return type("Res", (), {"ok": True, "output": "LGTM"})()
 
     # not a command → untouched
-    assert core.handle_command(cfg, forge, R(), "boss", "looks good", 9) is None
+    assert build.handle_command(cfg, forge, R(), "boss", "looks good", 9) is None
     # unauthorized → ignored, loudly
-    assert core.handle_command(cfg, forge, R(), "stranger", "/review", 9) == "ignored:not-authorized"
+    assert build.handle_command(cfg, forge, R(), "stranger", "/review", 9) == "ignored:not-authorized"
     assert any("not authorized" in b for _, b in forge.notes)
     # /review executes review rounds
-    assert core.handle_command(cfg, forge, R(), "dev", "/review", 9) == "reviewed PR #9"
+    assert build.handle_command(cfg, forge, R(), "dev", "/review", 9) == "reviewed PR #9"
     # GitHub habit: `#` before the number must not crash the parse (ValueError
     # on int("#486") was a live /repair failure upstream)
-    assert core.handle_command(cfg, forge, R(), "dev", "/review #9", 9) == "reviewed PR #9"
-    # /retry closes the stale PR and re-fires the build
-    orig = core.process_issue
-    core.process_issue = lambda cfg, f, r, issue, workdir=".": (forge.built.append(issue.number), None)[1]
-    try:
-        assert core.handle_command(cfg, forge, R(), "boss", "/retry 9", 1) == "retried issue #9"
-    finally:
-        core.process_issue = orig
+    assert build.handle_command(cfg, forge, R(), "dev", "/review #9", 9) == "reviewed PR #9"
+    # /retry closes the stale PR and re-fires the build — injected, not patched
+    assert build.handle_command(cfg, forge, R(), "boss", "/retry 9", 1,
+                                build=lambda cfg, f, r, issue:
+                                    (forge.built.append(issue.number), None)[1]) == "retried issue #9"
     assert forge.closed and forge.closed[0][0] == 55
     # unknown command
-    assert core.handle_command(cfg, forge, R(), "boss", "/merge everything", 9) == "ignored:unknown"
+    assert build.handle_command(cfg, forge, R(), "boss", "/merge everything", 9) == "ignored:unknown"
     # guardrail unchanged: direct close_issue from agent code still blocked
     from devloop.guardrails import GuardrailViolation
     try:
@@ -936,6 +947,7 @@ def test_commit_all_counts_pushed_ahead_as_delivered():
 def test_rebase_stage_rebases_clean_and_rebuilds_conflicts():
     """Pipeline upkeep: open devloop PRs get rebased onto main silently;
     a conflicting PR is closed with a rebuild note (counts as an attempt)."""
+    import devloop.build as build
     import devloop.core as core
 
     class RebaseForge(FlowForge):
@@ -978,6 +990,7 @@ def test_rebase_branch_infra_error_skips_head():
     missing ref — anything that raises) must NOT close the PR or burn an
     attempt; that path is for real conflicts only. The head is skipped
     loudly and the sweep moves on."""
+    import devloop.build as build
     import devloop.core as core
 
     class BoomForge(FlowForge):
@@ -1080,6 +1093,7 @@ def test_issue_scoped_runs_use_build_budget():
     """Issue-scoped runs (build) get build_timeout; PR-scoped runs (review)
     keep timeout — greenfield builds are a different magnitude than reviews.
     Spec runs (also issue-scoped) share the build budget."""
+    import devloop.build as build
     import devloop.core as core
     from devloop.review import review_pr
 
@@ -1108,7 +1122,7 @@ def test_issue_scoped_runs_use_build_budget():
             return type("Res", (), {"ok": True, "output": "work"})()
 
     r = R()
-    core.process_issue(cfg, F(), r, Issue(9, "t9", "b", ["ai-fix"]))
+    build.process_issue(cfg, F(), r, Issue(9, "t9", "b", ["ai-fix"]))
     assert r.timeout == cfg.pipeline.build_timeout  # build run: build budget
 
     rr = R()
@@ -1147,6 +1161,7 @@ def test_kind_runtime_config_parsing():
 def test_build_flow_uses_kind_runtime():
     """A [runtime.<kind>] override replaces the global runtime for that
     kind's build run; the heartbeat reports the agent actually run."""
+    import devloop.build as build
     import devloop.core as core
     from devloop.config import Runtime
 
@@ -1191,7 +1206,7 @@ def test_build_flow_uses_kind_runtime():
             cfg = Config(repo="o/r",
                          runtime=Runtime(kind_argv={"fix": ["kindagent", "run"]}),
                          pipeline=Pipeline(review_rounds=0))
-            out = core.process_issue(cfg, f, R(), Issue(7, "t7", "b", ["ai-fix"]))
+            out = build.process_issue(cfg, f, R(), Issue(7, "t7", "b", ["ai-fix"]))
         finally:
             os.environ["PATH"] = old_path
     assert f.prs == ["devloop/issue-7"]              # override ran, not R
@@ -1244,6 +1259,7 @@ def test_daily_budget_cap_blocks_runaway_issue():
     """max_per_day: an issue that failed N times today gets skipped (loudly)
     until tomorrow; other issues still build. Reads the ledger, no state."""
     import datetime
+    import devloop.build as build
     import devloop.core as core
     from devloop import ledger
 
@@ -1266,16 +1282,12 @@ def test_daily_budget_cap_blocks_runaway_issue():
             return [Issue(1, "t1", "", ["ai-fix"]), Issue(2, "t2", "", ["ai-fix"])]
 
     started = []
-    orig = core.process_issue
-    core.process_issue = lambda cfg, f, r, issue, workdir=None: started.append(issue.number)
-    try:
-        cfg = Config(repo="o/r", pipeline=Pipeline(max_parallel=2, max_per_day=2))
-        forge = BudgetForge()  # today_failures=2: at cap
-        core.run_once(cfg, forge, type("R", (), {"name": "fake"})())
-        # issue 1 hit its daily cap; issue 2 built
-        assert started == [2]
-    finally:
-        core.process_issue = orig
+    cfg = Config(repo="o/r", pipeline=Pipeline(max_parallel=2, max_per_day=2))
+    forge = BudgetForge()  # today_failures=2: at cap
+    core.run_once(cfg, forge, type("R", (), {"name": "fake"})(),
+                  build=lambda cfg, f, r, issue: started.append(issue.number))
+    # issue 1 hit its daily cap; issue 2 built
+    assert started == [2]
 
     # budget() counts only today's entries for the daily cap, ignores yesterday's
     class CountForge:
@@ -1517,6 +1529,7 @@ def test_ledger_ignores_spoofed_markers():
 def test_build_prompts_carry_progress_narration():
     """Every kind's prompt carries the progress instruction, and per-repo
     guidance (skills/progress/SKILL.md) is appended when present."""
+    import devloop.build as build
     import devloop.core as core
     from devloop.forge.base import Issue
 
@@ -1544,7 +1557,7 @@ def test_build_prompts_carry_progress_narration():
     prompts = []
     for label in ("ai-fix", "ai-build", "ai-remove"):
         r = R()
-        core.process_issue(cfg, F(), r, Issue(3, "t3", "", [label]))
+        build.process_issue(cfg, F(), r, Issue(3, "t3", "", [label]))
         prompts.append(r.prompt)
     assert len(prompts) == 3
     assert all("progress comments" in p and "narration, not state" in p
@@ -1561,7 +1574,7 @@ def test_build_prompts_carry_progress_narration():
             (Path("skills") / "progress" / "SKILL.md").write_text(
                 "REPO PROGRESS GUIDANCE\n")
             r = R()
-            core.process_issue(cfg, F(), r, Issue(3, "t3", "", ["ai-fix"]))
+            build.process_issue(cfg, F(), r, Issue(3, "t3", "", ["ai-fix"]))
             assert "REPO PROGRESS GUIDANCE" in r.prompt
     finally:
         os.chdir(old)
@@ -1628,6 +1641,7 @@ def test_forge_conformance():
 def test_merged_pr_completes_issue():
     """A human-merged devloop PR closes its issue — executing the human's
     merge sanction (same carve-out as close_pr), on the ledger record."""
+    import devloop.build as build
     import devloop.core as core
     from devloop.config import Config
     from devloop.forge.base import Comment
@@ -1643,19 +1657,19 @@ def test_merged_pr_completes_issue():
     cfg = Config(repo="o/r")
 
     # devloop PR merged → ledger entry + issue closed
-    out = core.handle_merge(cfg, forge, 55, "devloop/issue-9")
+    out = build.handle_merge(cfg, forge, 55, "devloop/issue-9")
     assert out == "completed issue #9"
     assert forge.notes and forge.notes[0][1].startswith("devloop PR merged #55")
     assert forge.completed == [9]
 
     # non-devloop branch → no-op (never touches a stranger's issue)
     f2 = F()
-    assert core.handle_merge(cfg, f2, 56, "feature/x") is None
+    assert build.handle_merge(cfg, f2, 56, "feature/x") is None
     assert not f2.notes and not f2.completed
 
     # malformed devloop branch → no-op, not a crash
     f3 = F()
-    assert core.handle_merge(cfg, f3, 57, "devloop/issue-") is None
+    assert build.handle_merge(cfg, f3, 57, "devloop/issue-") is None
     assert not f3.completed
 
     # guardrail unchanged: close_issue stays human-only for all other callers

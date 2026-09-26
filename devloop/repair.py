@@ -12,7 +12,7 @@ merges; it only pushes commits to the PR branch that already exists.
 from .config import Config
 from .forge import Forge
 from .gate import run_gate
-from .rounds import is_lgtm, run_round, with_repo_guidance
+from .rounds import is_lgtm, run_round, substitute, with_repo_guidance
 from .runtime import AgentRuntime
 
 REPAIR_PROMPT = (
@@ -50,12 +50,10 @@ def repair_pr(cfg: Config, forge: Forge, runtime: AgentRuntime, pr_number: int,
     or merges a PR — the PR already exists; humans own those buttons."""
     prompt = with_repo_guidance(REPAIR_PROMPT, "skills/repair/SKILL.md",
                                 "Repo-specific repair guidance")
-    prompt = (prompt
-              .replace("{issue_title}", issue_title)
-              .replace("{issue_body}", issue_body))
+    prompt = substitute(prompt, issue_title=issue_title, issue_body=issue_body)
     for rnd in range(1, cfg.pipeline.repair_rounds + 1):
         res = run_round(forge, runtime, pr_number, "repair",
-                        prompt.replace("{findings}", findings),
+                        substitute(prompt, findings=findings),
                         rnd, cfg.pipeline.repair_rounds, workdir,
                         cfg.pipeline.timeout)
         if res is None:
@@ -75,7 +73,7 @@ def repair_pr(cfg: Config, forge: Forge, runtime: AgentRuntime, pr_number: int,
         # run_round fetches the diff AFTER the fixer committed — the verifier
         # judges what is now on the branch, not the diff the fixer was handed
         vres = run_round(forge, runtime, pr_number, "verify",
-                         VERIFY_PROMPT.replace("{findings}", findings),
+                         substitute(VERIFY_PROMPT, findings=findings),
                          1, 1, workdir, cfg.pipeline.timeout)
         if vres and is_lgtm(vres.output):
             return ""

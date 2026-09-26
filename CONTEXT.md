@@ -75,7 +75,7 @@ delivery — see Review.
 ### Closeout
 
 Closing the loop on a build: a human merged the devloop PR, so its issue's
-lifecycle is complete. The **merge handler** (`core.handle_merge`, fired only
+lifecycle is complete. The **merge handler** (`build.handle_merge`, fired only
 from a real forge merge event — never agent output) posts the
 `devloop PR merged #N` ledger entry and closes the issue via
 `forge.complete_issue`. Not a guardrail breach — same carve-out as `/retry`'s

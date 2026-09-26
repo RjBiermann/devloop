@@ -57,6 +57,17 @@ def run_round(forge, runtime: AgentRuntime, pr_number: int, label: str,
     return res
 
 
+def substitute(prompt: str, **fields: str) -> str:
+    """The one substitution policy for every agent prompt: replace-based,
+    never .format() — injected content (issue bodies, comments, diffs) may
+    contain braces, and a stray brace in a body must be data, not a format
+    field (the .format() crash was a regression once). Caller may leave a
+    placeholder unsubstituted — run_round injects {diff} per round."""
+    for key, value in fields.items():
+        prompt = prompt.replace("{" + key + "}", value)
+    return prompt
+
+
 def with_repo_guidance(base: str, skill_path: str, header: str) -> str:
     """Base prompt + repo-specific guidance from skills/<x>/SKILL.md when
     present (the customization point). Replace-based substitution is done
