@@ -453,6 +453,67 @@ def test_failure_budget_resets_on_retry():
     assert ledger.count(forge, issue) == 1  # only failures after the reset
 
 
+def test_ghost_diff_never_passes():
+    """The #485 regression: a head rewrite between the command snapshot and
+    the diff fetch turned a 404-to-empty diff into a bare verifier LGTM —
+    and review's None→"" would have read as "nothing to fix, ready to
+    merge". An unverifiable diff must abort the round loudly, never pass,
+    never count as a failed run, never become a ready-for-merge verdict."""
+    from devloop.rounds import GhostDiffError, is_lgtm, run_round
+
+    class GhostForge:
+        def __init__(self, diff):
+            self.diff, self.notes, self.ran = diff, [], 0
+
+        def pr_diff_by_number(self, n):
+            return self.diff
+
+        def pr_comments(self, n):
+            return []
+
+        def pr_comment(self, n, body):
+            self.notes.append(body)
+
+    class R:
+        name = "fake"
+        ran = 0
+
+        def run(self, prompt, cwd, timeout):
+            self.ran += 1
+            return type("Res", (), {"ok": True, "output": "LGTM"})()
+
+    runtime = R()
+    for empty_diff in ["", "   \n"]:
+        f = GhostForge(empty_diff)
+        try:
+            run_round(f, runtime, 485, "pre-review", "see {diff}", 1, 1, ".", 10)
+            raise AssertionError("empty diff did not raise")
+        except GhostDiffError:
+            pass
+        assert runtime.ran == 0          # no agent round on an unreadable diff
+        assert any("ghost diff" in n for n in f.notes)  # loud, on the PR
+
+    # a 404 (branch gone) surfaces as RuntimeError from the gh call — same
+    # loud-abort contract, different mechanism
+    f = GhostForge("")
+
+    def boom(n):
+        raise RuntimeError("gh failed: (404)")
+
+    f.pr_diff_by_number = boom
+    try:
+        run_round(f, runtime, 485, "verify", "see {diff}", 1, 1, ".", 10)
+        raise AssertionError("404 did not raise")
+    except RuntimeError:
+        pass
+    assert runtime.ran == 0
+
+    # a real diff still flows through, and the LGTM word-gate is unchanged
+    f = GhostForge("--- a/x\n+++ b/x\n@@ -1 +1 @@\n")
+    res = run_round(f, runtime, 485, "verify", "see {diff}", 1, 1, ".", 10)
+    assert res.output == "LGTM" and is_lgtm(res.output) and runtime.ran == 1
+
+
 def test_ledger_producer_and_parser_agree():
     """The interface is the test surface: every ledger failure kind feeds
     count() and lands on one side of the attempt budget."""

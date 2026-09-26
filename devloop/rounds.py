@@ -24,8 +24,23 @@ def run_round(forge, runtime: AgentRuntime, pr_number: int, label: str,
     leaves the placeholder in), append the fresh PR thread, run the agent,
     announce the round. extra is appended after the thread (review's
     prior-findings carry). Returns the run result, or None when the run
-    failed — the failure is already commented on the PR."""
+    failed — the failure is already commented on the PR.
+
+    Raises GhostDiffError when the PR's diff is empty — that is not a failed
+    run (None) and must never degrade to "no findings"/"approved" upstream;
+    the command handler turns it into a loud failure comment."""
     diff = forge.pr_diff_by_number(pr_number)
+    if ghost_diff(diff):
+        # ghost diff — the PR head moved or vanished under this round. Short-
+        # circuit here: no agent run, no budget, no verdict. Raising (not
+        # returning None) is the point — see GhostDiffError.
+        forge.pr_comment(pr_number, f"**AI {label}, round {rnd}/{total}**\n\n"
+                                     "ghost diff — the PR head moved or vanished "
+                                     "under this round; diff is empty, verdict "
+                                     "refused. Re-fire the command once the head "
+                                     "is settled.")
+        raise GhostDiffError(
+            f"PR #{pr_number} diff empty ({label} round {rnd}) — head moved or fetch failed")
     round_prompt = (prompt.replace("{diff}", diff[:DIFF_CAP])
                     + thread_block(thread_lines(forge.pr_comments(pr_number))))
     round_prompt += extra
@@ -66,3 +81,20 @@ def thread_block(thread: list[str]) -> str:
 def is_lgtm(output: str) -> bool:
     """The single-word LGTM verdict, judged on the tail of the output."""
     return "LGTM" in output[-200:].upper()
+
+
+# internal seam error: an unreadable diff is not a failed run and not an
+# approval — it must not be swallowed by any caller's "no findings" or
+# "res is None" path (review's None → "" → repair's "nothing to fix" would
+# turn a ghost into a ready-for-merge verdict). Raised, so it lands in the
+# command handler's loud failure comment instead.
+class GhostDiffError(Exception):
+    """The forge returned no diff for a PR that must have one (head yanked
+    by a force-push/branch reset, or the fetch 404'd to empty). First seen
+    when a mid-run head rewrite turned a 404-to-empty diff into a bare
+    verifier LGTM — an unverifiable diff is never a pass."""
+
+
+def ghost_diff(diff: str) -> bool:
+    """A diff that isn't one: empty, 404-as-empty, whitespace-only."""
+    return not diff.strip()

@@ -209,3 +209,11 @@ is reachable via `/review`. On-demand Repair never counts against the attempt
 budget (see Ledger): it is upkeep of an already-authorized build, not a build
 attempt — and it refuses non-devloop PRs, where the spec-issue context a fixer
 needs does not exist.
+
+### Ghost diff
+
+A diff fetch that comes back empty (or whitespace-only) for a PR that must
+have content — head yanked by a force-push or the fetch 404'd to empty.
+First seen when a mid-run head rewrite turned a 404-to-empty diff into a
+bare verifier LGTM (#485, 2026-09-26). An unverifiable diff is never a
+pass: rounds abort loudly, the command is re-fired on a settled head.
