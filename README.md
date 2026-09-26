@@ -63,6 +63,9 @@ policy as everything else):
   devloop PR if any, and re-fire the build
 - `/review <pr>` — run the AI pre-review rounds on an open PR on demand
   (`/review` inside a PR thread targets that PR)
+- `/repair <pr>` — re-review a devloop PR for fresh findings, then re-fire
+  AI repair on them (`repair_rounds` config must be > 0; findings-only
+  review without a fix = `/review`)
 
 The workflow triggers on `issue_comment` with a YAML-level gate so plain
 comments never spin up a runner job; non-command comments cost nothing.

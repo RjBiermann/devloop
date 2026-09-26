@@ -426,6 +426,11 @@ def _cmd_forge(auth_ok=True):
             from devloop.forge.base import Comment
             return [Comment("human", "out of scope — tracked in #12")] if n == 55 else []
         def pr_comment(self, n, body): self.notes.append((n, body))
+        def open_devloop_prs(self):
+            from devloop.forge.base import OpenPR
+            return [OpenPR(55, "devloop/issue-9", [])]
+        def issue_of_branch(self, b):
+            return Forge.issue_of_branch(self, b)  # base impl: devloop/issue-<n>
 
         def comments(self, n):
             # ledger: one failure, then a reset, then one more failure —
@@ -544,6 +549,57 @@ def test_repair_pushes_gates_and_verifies():
     cfg = Config(repo="o/r", pipeline=Pipeline(repair_rounds=1, verify="false"))
     assert repair_pr(cfg, f, r, 55, "devloop/issue-9", ".", "t", "b", "P0: broken") == "P0: broken"
     assert f.pushed == 0 and "gate FAILED" in f.notes[-1]
+
+
+def test_repair_command_runs_review_then_repair():
+    """`/repair <pr>`: devloop-PR gate, re-review for fresh findings, then
+    repair in a fresh checkout; nothing-to-fix and foreign PR refuse."""
+    import devloop.core as core
+    from devloop.forge.base import OpenPR
+
+    calls, pushed = [], []
+
+    def fake_review(cfg, forge, runtime, pr, issue=None):
+        calls.append("review")
+        # LGTM scenario is marked on its forge instance (getattr default
+        # covers the other scenarios), findings otherwise
+        return "" if getattr(forge, "_lgtm", False) else "P1: wrong"
+
+    def fake_repair(cfg, forge, runtime, pr, branch, workdir, t, b, findings):
+        calls.append(("repair", pr, branch, workdir, findings))
+
+    review_pr, repair_pr = core.review_pr, core.repair_pr
+    core.review_pr, core.repair_pr = fake_review, fake_repair
+    try:
+        runtime = type("R", (), {"name": "fake"})()
+        cfg = Config(repo="o/r", access=Access(allow=["boss"]))
+        # not a devloop PR → refused, no review run
+        f = _cmd_forge()
+        f.open_devloop_prs = lambda: []
+        assert core.handle_command(cfg, f, runtime, "boss", "/repair 55", 9) == "ignored:not-devloop"
+        assert calls == []
+        # LGTM re-review → no repair run, comment says nothing to fix
+        f = _cmd_forge()
+        f._lgtm = True
+        f.open_devloop_prs = lambda: [OpenPR(55, "devloop/issue-9", [])]
+        f.start_work = lambda *a, **k: "/fake/wt"
+        f.finish_work = lambda *a, **k: pushed.append(("finish", a[0]))
+        assert core.handle_command(cfg, f, runtime, "boss", "/repair 55", 9) == "repaired PR #55"
+        assert calls == ["review"] and "nothing to fix" in f.notes[-1][1]
+        # findings → repair with the issue's branch and a fresh checkout
+        f = _cmd_forge()
+        f.start_work = lambda *a, **k: "/fake/wt"
+        f.finish_work = lambda *a, **k: pushed.append(("finish", a[0]))
+        assert core.handle_command(cfg, f, runtime, "boss", "/repair 55", 9) == "repaired PR #55"
+        assert calls[-1] == ("repair", 55, "devloop/issue-9", "/fake/wt", "P1: wrong")
+        assert pushed == [("finish", 9)]  # checkout bracket closed
+        # repair_rounds = 0 → refused before any review spend
+        calls.clear()
+        assert core.handle_command(Config(repo="o/r", pipeline=Pipeline(review_rounds=2, repair_rounds=0)),
+                                   _cmd_forge(), runtime, "boss", "/repair 55", 9) == "ignored:repair-disabled"
+        assert calls == []
+    finally:
+        core.review_pr, core.repair_pr = review_pr, repair_pr
 
 
 def test_build_flow_hands_review_findings_to_repair():

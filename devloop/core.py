@@ -242,6 +242,40 @@ def handle_command(cfg: Config, forge: Forge, runtime: AgentRuntime,
             pr = int(arg) if arg else context_number
             review_pr(cfg, forge, runtime, pr)
             return f"reviewed PR #{pr}"
+        if cmd == "/repair":
+            # Re-fire Repair (CONTEXT.md) on a delivered PR: review first so
+            # the findings match the diff the fixer sees, then repair.
+            if cfg.pipeline.repair_rounds < 1:
+                forge.comment(context_number,
+                              f"`{cmd}` ignored — pipeline.repair_rounds = 0 "
+                              "in config; use `/review` for findings-only.")
+                return "ignored:repair-disabled"
+            pr = int(arg) if arg else context_number
+            # devloop PRs only — the fixer needs the spec issue; a foreign
+            # PR has none. Branch comes from the adapter snapshot, like the
+            # sweep's own view, so eligibility and head stay one decision.
+            branch = next((p.head for p in forge.open_devloop_prs()
+                           if p.number == pr), None)
+            if branch is None:
+                forge.comment(context_number,
+                              f"`{cmd}` ignored — PR #{pr} is not an open "
+                              "devloop PR (no spec issue to repair against); "
+                              "use `/review` instead.")
+                return "ignored:not-devloop"
+            n = forge.issue_of_branch(branch)
+            issue = forge.issue(n)
+            findings = review_pr(cfg, forge, runtime, pr, issue)
+            if not findings:
+                forge.pr_comment(pr, "`/repair`: re-review found nothing to "
+                                     "fix — the PR is ready for human merge.")
+            else:
+                workdir = forge.start_work(n, branch)
+                try:
+                    repair_pr(cfg, forge, runtime, pr, branch, workdir,
+                              issue.title, issue.body, findings)
+                finally:
+                    forge.finish_work(n)
+            return f"repaired PR #{pr}"
         if cmd == "/retry":
             n = int(arg) if arg else context_number
             existing = forge.pr_for_branch(forge.branch_for(n))

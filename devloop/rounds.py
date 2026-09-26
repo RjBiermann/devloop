@@ -31,7 +31,11 @@ def run_round(forge, runtime: AgentRuntime, pr_number: int, label: str,
     round_prompt += extra
     res = runtime.run(round_prompt, cwd=cwd, timeout=timeout)
     if not res.ok:
-        forge.pr_comment(pr_number, f"AI {label} round {rnd}: run failed.")
+        # the tail is the only diagnostic a human gets (Q5: timeout vs crash
+        # vs bad output) — post it with the failure comment
+        tail = res.output.strip()[-TAIL:]
+        detail = f"\n\n```\n{tail}\n```" if tail else ""
+        forge.pr_comment(pr_number, f"AI {label} round {rnd}: run failed." + detail)
         return None
     forge.pr_comment(pr_number, f"**AI {label}, round {rnd}/{total}**\n\n"
                              + res.output.strip()[-TAIL:])

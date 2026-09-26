@@ -106,7 +106,7 @@ until a trigger label lands).
 
 ### Command
 
-A `/`-comment a human leaves on an issue (`/review <pr>`, `/retry
+A `/`-comment a human leaves on an issue (`/review <pr>`, `/repair <pr>`, `/retry
 <issue>`) that devloop executes on their behalf — access-gated before
 anything happens, and never parsed out of agent-written comments
 (`issue_comment` CI event only). Commands **re-fire work, never create
@@ -202,4 +202,10 @@ not Review — review finds, repair acts; review stays findings-only. Repair is
 not Delivery — it never opens, closes, or merges a PR; it only pushes commits
 to the PR branch that already exists. Not the same as the `ai-fix` label:
 `ai-fix` is an issue-level trigger a human applies to start a build; Repair is
-PR-level upkeep that runs inside one.
+PR-level upkeep that runs inside one. Repair is also reachable on its own:
+the `/repair` Command re-fires it on a delivered PR — Review re-derives the
+findings against the current diff, Repair acts on them — mirroring how Review
+is reachable via `/review`. On-demand Repair never counts against the attempt
+budget (see Ledger): it is upkeep of an already-authorized build, not a build
+attempt — and it refuses non-devloop PRs, where the spec-issue context a fixer
+needs does not exist.
