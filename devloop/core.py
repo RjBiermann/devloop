@@ -231,7 +231,7 @@ def handle_command(cfg: Config, forge: Forge, runtime: AgentRuntime,
     if not text.startswith("/"):
         return None
     cmd, _, arg = text.partition(" ")
-    arg = arg.strip()
+    arg = arg.strip().lstrip("#")  # GitHub habit: `/repair #486` reads as #486
     if not forge.is_authorized(author, cfg.access):
         forge.comment(context_number,
                       f"command `{cmd}` ignored — `{author}` is not authorized "

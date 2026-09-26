@@ -874,6 +874,9 @@ def test_comment_commands():
     assert any("not authorized" in b for _, b in forge.notes)
     # /review executes review rounds
     assert core.handle_command(cfg, forge, R(), "dev", "/review", 9) == "reviewed PR #9"
+    # GitHub habit: `#` before the number must not crash the parse (ValueError
+    # on int("#486") was a live /repair failure upstream)
+    assert core.handle_command(cfg, forge, R(), "dev", "/review #9", 9) == "reviewed PR #9"
     # /retry closes the stale PR and re-fires the build
     orig = core.process_issue
     core.process_issue = lambda cfg, f, r, issue, workdir=".": (forge.built.append(issue.number), None)[1]
