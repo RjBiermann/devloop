@@ -1296,6 +1296,45 @@ def test_github_adapter_carries_base_url_to_gh():
     assert r.returncode == 0
 
 
+def test_close_pr_survives_branch_delete_failure():
+    """close_pr is two steps by contract: the PR close is the load-bearing
+    act (/retry's sanction executed, sweep conflict-rebuild); the branch
+    delete is cleanup. Some token channels (GITHUB_TOKEN without
+    contents:write — fictional-octo-fiesta /retry 487) 403 the ref delete;
+    that must not kill the run AFTER the close (the /retry 487 failure:
+    PR #491 closed, then the exception stranded the issue — no ledger
+    reset, no rebuild). Cleanup failure is swallowed; the rebuild's push
+    recreates the branch."""
+    import subprocess as sp
+    from devloop.forge.github import GitHub
+
+    calls: list[list[str]] = []
+
+    def fake_run(args, cwd=".", gh_host=""):
+        calls.append(args)
+        if args[:2] == ["gh", "api"]:  # the ref delete → the 403 path
+            raise RuntimeError("gh failed: HTTP 403: Resource not "
+                               "accessible by integration")
+        return ""
+
+    import devloop.forge.github as gh_mod
+    real = gh_mod._run
+    gh_mod._run = fake_run
+    try:
+        GitHub("o/r").close_pr(491, "closed by `/retry` — rebuild incoming")
+    finally:
+        gh_mod._run = real
+
+    # close happened, against the right repo
+    assert any(args[:3] == ["gh", "pr", "close"] and "-R" in args
+               and "o/r" in args for args in calls)
+    # the delete was still attempted, at the canonical ref, and its
+    # failure did not escape
+    assert any(args[:2] == ["gh", "api"] and
+               args[-1] == "repos/o/r/git/refs/heads/devloop/issue-491"
+               for args in calls)
+
+
 def test_version_bump():
     # --version is derived, never a stale literal: the installed metadata or
     # the checkout's pyproject (the file CI bumps, ADR-0002) — probe the

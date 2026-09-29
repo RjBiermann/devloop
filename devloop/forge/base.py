@@ -112,7 +112,8 @@ class Forge:
         authorized human is the sanction, and devloop closing the stale
         delivery is executing that human's explicit command. Still guarded
         one layer down: handle_command is the only caller, and it
-        access-gates the author first."""
+        access-gates the author first. The branch delete is best-effort
+        cleanup — adapters must not fail the close over it."""
         raise NotImplementedError
 
     def complete_issue(self, number: int) -> None:

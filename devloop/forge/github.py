@@ -5,6 +5,7 @@ on dev machines and GitHub-hosted runners, and maps 1:1 to forge operations.
 """
 
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -248,7 +249,19 @@ they never fan out per-PR."""
 
     def close_pr(self, pr_number: int, reason: str) -> None:
         _run(["gh", "pr", "close", str(pr_number), "-R", self.repo,
-              "--comment", reason, "--delete-branch"], gh_host=self._gh_host)
+              "--comment", reason], gh_host=self._gh_host)
+        # --delete-branch needs git-refs delete — a contents-write some token
+        # channels deliberately lack (fictional-octo-fiesta /retry 487:
+        # HTTP 403 killed the run AFTER the close, stranding the issue).
+        # Cleanup is upkeep, best-effort; the rebuild re-pushes the branch.
+        # ponytail: leave this if the deployed tokens gain contents:write.
+        try:
+            _run(["gh", "api", "--method", "DELETE",
+                  f"repos/{self.repo}/git/refs/heads/devloop/issue-{pr_number}"],
+                 gh_host=self._gh_host)
+        except RuntimeError as e:
+            logging.getLogger(__name__).warning(
+                "branch delete for #%d failed (non-fatal): %s", pr_number, e)
 
     def complete_issue(self, number: int) -> None:
         _run(["gh", "issue", "close", str(number), "-R", self.repo], gh_host=self._gh_host)
