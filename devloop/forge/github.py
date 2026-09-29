@@ -250,15 +250,22 @@ they never fan out per-PR."""
     def close_pr(self, pr_number: int, reason: str) -> None:
         _run(["gh", "pr", "close", str(pr_number), "-R", self.repo,
               "--comment", reason], gh_host=self._gh_host)
-        # --delete-branch needs git-refs delete — a contents-write some token
-        # channels deliberately lack (fictional-octo-fiesta /retry 487:
-        # HTTP 403 killed the run AFTER the close, stranding the issue).
-        # Cleanup is upkeep, best-effort; the rebuild re-pushes the branch.
+        # Cleanup = the PR's own head branch, looked up — never derived.
+        # The devloop branch carries the ISSUE number, so deriving from
+        # the PR number hit a nonexistent ref or, on a number collision,
+        # a live sibling branch (issue #13). Old --delete-branch deleted
+        # the actual head; this restores that. Failure is non-fatal (some
+        # token channels lack git-refs delete — /retry 487's 403); the
+        # rebuild's push recreates the branch.
         # ponytail: leave this if the deployed tokens gain contents:write.
         try:
-            _run(["gh", "api", "--method", "DELETE",
-                  f"repos/{self.repo}/git/refs/heads/devloop/issue-{pr_number}"],
-                 gh_host=self._gh_host)
+            head = _run(["gh", "pr", "view", str(pr_number), "-R", self.repo,
+                         "--json", "headRefName", "--jq", ".headRefName"],
+                        gh_host=self._gh_host).strip()
+            if head:
+                _run(["gh", "api", "--method", "DELETE",
+                      f"repos/{self.repo}/git/refs/heads/{head}"],
+                     gh_host=self._gh_host)
         except RuntimeError as e:
             logging.getLogger(__name__).warning(
                 "branch delete for #%d failed (non-fatal): %s", pr_number, e)

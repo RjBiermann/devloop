@@ -1304,14 +1304,20 @@ def test_close_pr_survives_branch_delete_failure():
     that must not kill the run AFTER the close (the /retry 487 failure:
     PR #491 closed, then the exception stranded the issue — no ledger
     reset, no rebuild). Cleanup failure is swallowed; the rebuild's push
-    recreates the branch."""
-    import subprocess as sp
+    recreates the branch.
+
+    The delete targets the PR's actual head branch, looked up — never
+    derived from the PR number (issue #13: the devloop branch carries the
+    ISSUE number, so devloop/issue-{pr_number} was a nonexistent ref on
+    the normal PR# != issue# path and a sibling branch on a collision)."""
     from devloop.forge.github import GitHub
 
     calls: list[list[str]] = []
 
     def fake_run(args, cwd=".", gh_host=""):
         calls.append(args)
+        if args[:3] == ["gh", "pr", "view"]:
+            return "devloop/issue-487\n"  # the PR's real head branch
         if args[:2] == ["gh", "api"]:  # the ref delete → the 403 path
             raise RuntimeError("gh failed: HTTP 403: Resource not "
                                "accessible by integration")
@@ -1321,6 +1327,7 @@ def test_close_pr_survives_branch_delete_failure():
     real = gh_mod._run
     gh_mod._run = fake_run
     try:
+        # PR #491 delivers issue #487 — the normal PR# != issue# case
         GitHub("o/r").close_pr(491, "closed by `/retry` — rebuild incoming")
     finally:
         gh_mod._run = real
@@ -1328,10 +1335,13 @@ def test_close_pr_survives_branch_delete_failure():
     # close happened, against the right repo
     assert any(args[:3] == ["gh", "pr", "close"] and "-R" in args
                and "o/r" in args for args in calls)
-    # the delete was still attempted, at the canonical ref, and its
-    # failure did not escape
+    # the head was looked up, not derived from the PR number…
+    assert any(args[:3] == ["gh", "pr", "view"] and
+               args[-2:] == ["--jq", ".headRefName"] for args in calls)
+    # …and the delete targeted that looked-up branch (issue #487's ref,
+    # not a nonexistent devloop/issue-491), failure swallowed
     assert any(args[:2] == ["gh", "api"] and
-               args[-1] == "repos/o/r/git/refs/heads/devloop/issue-491"
+               args[-1] == "repos/o/r/git/refs/heads/devloop/issue-487"
                for args in calls)
 
 
