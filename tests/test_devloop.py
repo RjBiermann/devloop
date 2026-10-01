@@ -603,6 +603,49 @@ def test_repair_pushes_gates_and_verifies():
     assert repair_pr(cfg, f, r, 55, "devloop/issue-9", ".", "t", "b", "P0: broken") == "P0: broken"
     assert f.pushed == 0 and "gate FAILED" in f.notes[-1]
 
+    # a decode-collapsed verify output must not replace real findings —
+    # round 2's fixer still gets the list it started with
+    f = RepairForge()
+    soup = "x\n" + "\n".join(["0"] * 40)
+    r = R(["fixed half", soup, "fixed more", "LGTM"])
+    out = repair_pr(Config(repo="o/r", pipeline=Pipeline(repair_rounds=2)),
+                    f, r, 55, "devloop/issue-9", "wt", "t", "b", "P1: bad")
+    assert out == "" and "P1: bad" in r.calls[2][0]  # soup never reached the fixer
+
+
+def test_valid_findings_gate_blocks_garbage_repair():
+    """The review→repair seam: findings that don't parse (or collapse) never
+    start a fixer — repair is the expensive half. Both entry points gate:
+    the sweep path and `/repair`."""
+    import devloop.build as build
+    from devloop.config import Config, Pipeline
+
+    calls = []
+    real_repair = build.repair_pr
+    build.repair_pr = lambda *a, **k: calls.append(a)
+    try:
+        soup = "work\n" + "\n".join(["0"] * 40) + "\nasddieed"
+        # the sweep path: garbage findings → no repair run (the gate lives at
+        # one place in process_issue; the predicate is tested above)
+        from devloop.rounds import valid_findings
+        assert not valid_findings(soup)
+        assert valid_findings("- src/x.py:10 — P1 — broken")
+        # /repair path: end-to-end through handle_command with a stub review
+        forge = _cmd_forge()
+        real_review = build.review_pr
+        build.review_pr = lambda cfg, f, rt, pr, issue=None: soup
+        try:
+            cfg = Config(repo="o/r", pipeline=Pipeline(repair_rounds=1))
+            out = build.handle_command(cfg, forge, type("R", (), {"name": "fake"})(),
+                                       "boss", "/repair #55", 9)
+            assert "failed validation" in out
+            assert not any("AI repair" in b for _, b in forge.notes)
+        finally:
+            build.review_pr = real_review
+    finally:
+        build.repair_pr = real_repair
+    assert not calls  # no fixer ever started
+
 
 def test_repair_command_runs_review_then_repair():
     """`/repair <pr>`: devloop-PR gate, re-review for fresh findings, then
@@ -615,7 +658,7 @@ def test_repair_command_runs_review_then_repair():
         calls.append("review")
         # LGTM scenario is marked on its forge instance (getattr default
         # covers the other scenarios), findings otherwise
-        return "" if getattr(forge, "_lgtm", False) else "P1: wrong"
+        return "" if getattr(forge, "_lgtm", False) else "src/x.py:1 — P1 — wrong"
 
     def fake_repair(cfg, forge, runtime, pr, branch, workdir, t, b, findings):
         calls.append(("repair", pr, branch, workdir, findings))
@@ -643,7 +686,7 @@ def test_repair_command_runs_review_then_repair():
         f.start_work = lambda *a, **k: "/fake/wt"
         f.finish_work = lambda *a, **k: pushed.append(("finish", a[0]))
         assert build.handle_command(cfg, f, runtime, "boss", "/repair 55", 9) == "repaired PR #55"
-        assert calls[-1] == ("repair", 55, "devloop/issue-9", "/fake/wt", "P1: wrong")
+        assert calls[-1] == ("repair", 55, "devloop/issue-9", "/fake/wt", "src/x.py:1 — P1 — wrong")
         assert pushed == [("finish", 9)]  # checkout bracket closed
         # repair_rounds = 0 → refused before any review spend
         calls.clear()
@@ -661,7 +704,7 @@ def test_build_flow_hands_review_findings_to_repair():
 
     def fake_review(cfg, forge, runtime, pr, issue=None):
         calls.append(("review", issue.title))
-        return "" if issue.title == "lgtm" else "P1: wrong"
+        return "" if issue.title == "lgtm" else "src/x.py:1 — P1 — wrong"
 
     def fake_repair(cfg, forge, runtime, pr, branch, workdir, t, b, findings):
         calls.append(("repair", findings))
@@ -680,7 +723,7 @@ def test_build_flow_hands_review_findings_to_repair():
             build.process_issue(Config(repo="o/r"), forge, runtime, issue, workdir="wt")
     finally:
         build.review_pr, build.repair_pr = review_pr, repair_pr
-    assert calls == [("review", "finds"), ("repair", "P1: wrong"), ("review", "lgtm")]
+    assert calls == [("review", "finds"), ("repair", "src/x.py:1 — P1 — wrong"), ("review", "lgtm")]
 
 
 def test_prompt_substitution_is_one_policy():
@@ -1405,8 +1448,77 @@ def test_runtime_denylists_bind_agent_shell():
                     assert bash[c] == "deny" and bash[f"{c} *"] == "deny"
     finally:
         rt.subprocess.run = real_run
-    # unknown custom engines are the user's control — no binding, no crash
+    # unknown custom engines are the user's control — no binding, but the
+    # gap is logged, not silent (a standing advisory wall must be visible)
     rt.AgentRuntime(["pi", "--mode", "text"])  # constructor only; run() passes through
+    import logging
+    recs: list[logging.LogRecord] = []
+    h = logging.Handler()
+    h.emit = recs.append
+    rt.log.addHandler(h)
+    rt.log.setLevel(logging.WARNING)
+    rt.subprocess.run = fake_run
+    try:
+        rt.AgentRuntime(["other-agent", "run"]).run("do work", cwd=".", timeout=60)
+    finally:
+        rt.subprocess.run = real_run
+        rt.log.removeHandler(h)
+    assert any("no deny binding" in r.getMessage() for r in recs)
+
+
+def test_runtime_pi_binds_deny_extension():
+    """pi has no flag-level deny list — the binding ships as a generated
+    --extension tool_call gate built from the same DENY_COMMANDS, and the
+    temp file is deleted after the run."""
+    import os
+    import devloop.runtime as rt
+    captured = {}
+
+    def fake_run(argv, **kw):
+        captured["argv"] = argv
+        captured["js"] = open(argv[argv.index("--extension") + 1]).read()
+        return type("R", (), {"returncode": 0, "stdout": "done", "stderr": ""})()
+
+    real_run = rt.subprocess.run
+    rt.subprocess.run = fake_run
+    try:
+        out = rt.AgentRuntime(["pi", "--no-session"]).run("do work", cwd=".", timeout=60)
+        assert out.ok
+        i = captured["argv"].index("--extension")
+        ext = captured["argv"][i + 1]
+        js = captured["js"]
+        assert "export default function (pi)" in js
+        for c in rt.DENY_COMMANDS:
+            assert c in js
+        assert not os.path.exists(ext)  # cleaned up after the run
+    finally:
+        rt.subprocess.run = real_run
+
+
+def test_runtime_timeout_is_a_failed_run():
+    """subprocess.TimeoutExpired escaping runtime.run() skipped run_round's
+    failure comment and the ledger stamp — the issue's last word was 'gate
+    PASS' while the sweep recorded a failure. A killed run returns a failed
+    RunResult (with the stderr tail as the diagnostic) instead of raising."""
+    import subprocess
+    import devloop.runtime as rt
+
+    def fake_run(argv, **kw):
+        raise subprocess.TimeoutExpired(argv[0], kw["timeout"], stderr="Killed\n")
+
+    def fake_run_oserror(argv, **kw):
+        raise FileNotFoundError("binary missing")
+
+    real_run = rt.subprocess.run
+    rt.subprocess.run = fake_run
+    try:
+        out = rt.AgentRuntime(["pi"]).run("do work", cwd=".", timeout=60)
+        assert not out.ok and "Killed" in out.output
+        rt.subprocess.run = fake_run_oserror
+        out = rt.AgentRuntime(["nope"]).run("do work", cwd=".", timeout=60)
+        assert not out.ok and "binary missing" in out.output
+    finally:
+        rt.subprocess.run = real_run
 
 
 def test_runtime_output_keeps_stderr_off_success():
@@ -1871,13 +1983,61 @@ def test_branch_naming_one_owner():
     assert f.issue_of_branch("devloop/issue-x") is None    # unparseable
 
 
+def test_degenerate_output_never_becomes_findings():
+    """v0.3.30 posted a header-only comment (empty stdout) and token soup
+    (decode collapse) as 'findings', and the soup started a 30-minute repair
+    agent. Empty or degenerate output is a failed run: failure comment on the
+    PR, None upstream, nothing posted as findings."""
+    from devloop.rounds import degenerate, run_round, valid_findings
+
+    assert not degenerate("P1: short finding\nrationale continues here\n")
+    assert not degenerate("one\ntwo\nthree words here\n")          # < 4 lines
+    soup = "run run = ok ok\n" + "\n".join(["0"] * 40) + "\nasddieed"
+    assert degenerate(soup)
+    assert not valid_findings("")
+    assert not valid_findings(soup)
+    assert valid_findings("1. src/build.py:42 — P1 — gate runs before push")
+
+    notes = []
+
+    class RoundForge:
+        def pr_diff_by_number(self, n):
+            return "the diff"
+
+        def pr_comments(self, n):
+            return []
+
+        def pr_comment(self, n, body):
+            notes.append(body)
+
+    class Res:
+        def __init__(self, output):
+            self.ok, self.output = True, output
+
+    class R:
+        name = "fake"
+
+        def __init__(self, output):
+            self.output = output
+
+        def run(self, prompt, cwd, timeout):
+            return Res(self.output)
+
+    for bad in ["   ", soup]:
+        notes.clear()
+        assert run_round(RoundForge(), R(bad), 55, "pre-review", "see {diff}",
+                         1, 1, ".", 60) is None
+        assert any("run failed" in n for n in notes)
+        assert not any(n.startswith("**AI pre-review") for n in notes)
+
+
 def test_rounds_dialect_shared():
     """The round engine: LGTM verdict parsing, thread formatting, and
     repo-guidance loading exist once in rounds.py — and run_round owns the
     full round bracket: diff+thread injection, announcement, run-failure
     comment. Plus the PR-body contract, owned by delivery."""
     from devloop.forge.base import Comment
-    from devloop.rounds import is_lgtm, run_round, thread_lines, with_repo_guidance
+    from devloop.rounds import is_lgtm, run_round, thread_lines, with_repo_guidance  # noqa: F401
 
     assert is_lgtm("all good\nLGTM") is True
     # verdict lives at the tail: LGTM older than the 200-char tail window is not a verdict

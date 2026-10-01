@@ -5,6 +5,17 @@ patch bumps fix behavior bugs. Tag = release.
 
 ## Unreleased
 
+- **Review/repair loop hardened** (issue #14, observed on fictional-octo-fiesta
+  #503): `AgentRuntime.run()` catches `TimeoutExpired`/`OSError` and returns a
+  failed `RunResult` — a timed-out repair round now posts its failure comment
+  and stamps the ledger instead of dying silently between "gate PASS" and "1
+  failed". `run_round` treats empty or decode-collapsed output as a failed run
+  (failure reason on the PR, never posted as findings); findings must parse
+  (`file:line` shape, `valid_findings`) before they start a fixer — review is
+  cheap, repair is a full agent run. The HUMAN_ONLY deny binding now covers
+  pi (generated `--extension` tool_call gate from the same `DENY_COMMANDS`)
+  and unknown engines log the advisory-wall gap instead of silently skipping
+  the binding.
 - **Spec conversation gated** (issue #11): the spec loop's refine prompt
   rides the same seam as builds — access-gated, untrusted-framed, bounded
   by the shared `[pipeline].prompt_comments` cap. Carve-out: the pipeline's

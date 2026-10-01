@@ -2,8 +2,12 @@
 
 from dataclasses import dataclass
 import json
+import logging
 import os
 import subprocess
+import tempfile
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -50,6 +54,31 @@ def _opencode_deny_env() -> dict[str, str]:
     return {"OPENCODE_CONFIG_CONTENT": json.dumps({"permission": {"bash": bash}})}
 
 
+def _pi_deny_extension() -> str:
+    """pi has no flag-level deny list — bind the wall via a `--extension`
+    tool_call gate, generated from DENY_COMMANDS so the three shells cannot
+    drift apart. ponytail: prefix match on the command's first segment
+    only — chained/subshelled invocations are not covered; same ceiling as
+    the claude/opencode bindings, extend if abuse shows up."""
+    js = (
+        "// devloop-generated deny gate: HUMAN_ONLY commands are for humans.\n"
+        "const DENY = " + json.dumps(DENY_COMMANDS) + ";\n"
+        "export default function (pi) {\n"
+        "  pi.on('tool_call', async (event) => {\n"
+        "    if (event.toolName !== 'bash') return;\n"
+        "    const cmd = String(event.input?.command ?? '').trimStart();\n"
+        "    if (DENY.some((c) => cmd.startsWith(c)))\n"
+        "      return { block: true,\n"
+        "               reason: 'devloop: human-only command denied: ' + cmd };\n"
+        "  });\n"
+        "}\n"
+    )
+    f = tempfile.NamedTemporaryFile("w", suffix=".js", delete=False)
+    f.write(js)
+    f.close()
+    return f.name
+
+
 class AgentRuntime:
     """Wraps one headless agent CLI: prompt in / RunResult out."""
 
@@ -60,14 +89,35 @@ class AgentRuntime:
     def run(self, prompt: str, cwd: str, timeout: int) -> RunResult:
         deny_argv: list[str] = []
         env = None
+        ext = None  # the generated pi extension, deleted after the run
         if self.argv[0] == "claude":  # binding follows the binary, even custom argv
             deny_argv = _claude_deny_argv()
         elif self.argv[0] == "opencode":
             env = {**os.environ, **_opencode_deny_env()}
-        r = subprocess.run(
-            [*self.argv, *deny_argv, prompt],
-            cwd=cwd, capture_output=True, text=True, timeout=timeout, env=env,
-        )
+        elif self.argv[0] == "pi":
+            ext = _pi_deny_extension()
+            deny_argv = ["--extension", ext]
+        else:
+            # the gap must be visible, not silent: no deny binding exists for
+            # this binary, so HUMAN_ONLY stays advisory for the agent itself
+            log.warning("runtime %r: no deny binding — HUMAN_ONLY stays "
+                        "advisory for this engine", self.argv[0])
+        try:
+            r = subprocess.run(
+                [*self.argv, *deny_argv, prompt],
+                cwd=cwd, capture_output=True, text=True, timeout=timeout, env=env,
+            )
+        except subprocess.TimeoutExpired as e:
+            # a killed run is a failed run: returning (not raising) restores
+            # run_round's failure-comment contract — the exception escaping
+            # past it skipped the failure comment and any ledger stamp.
+            stderr = e.stderr if isinstance(e.stderr, str) else ""
+            return RunResult(False, stderr or f"agent run timed out after {timeout}s")
+        except OSError as e:
+            return RunResult(False, str(e))
+        finally:
+            if ext:
+                os.unlink(ext)
         # stdout is the agent's report; stderr is diagnostic noise (agent
         # install/progress chatter) that must not leak into PR bodies —
         # keep it only when the run failed, where it's the ledger's clue.

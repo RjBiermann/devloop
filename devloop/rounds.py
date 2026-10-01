@@ -7,12 +7,38 @@ guidance), the diff injection cap, and the LGTM verdict. review.py and
 repair.py call these, so the dialect changes in one place.
 """
 
+import re
+from collections import Counter
 from pathlib import Path
 
 from .runtime import AgentRuntime, RunResult, TAIL
 
 # one cap for injected diffs — both loops truncate the same way
 DIFF_CAP = 40000
+
+
+def degenerate(text: str) -> bool:
+    """Cheap decode-collapse detector: more than half the lines are the same
+    lone token (the lone-0 cascade, the 1/2/3/4 train). ponytail: heuristic,
+    not a classifier — narrow it if real findings trip it."""
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    if len(lines) < 4:
+        return False
+    singles = Counter(l for l in lines if len(l.split()) == 1)
+    tok, n = singles.most_common(1)[0] if singles else ("", 0)
+    return n > len(lines) / 2
+
+
+# the finding shape both prompts mandate: `file:line — severity — rationale`
+FINDING_RE = re.compile(r"^\s*(?:[-*\d.)]+\s+)?\S+:\d+", re.M)
+
+
+def valid_findings(text: str) -> bool:
+    """Findings a repair round may act on: at least one parseable finding
+    (the prompt-mandated file:line shape) and not a decode-collapsed tail.
+    Repair is the expensive half — a 30-minute fixer fed `asddieed` burns
+    the budget on nothing."""
+    return not degenerate(text) and FINDING_RE.search(text) is not None
 
 
 def run_round(forge, runtime: AgentRuntime, pr_number: int, label: str,
@@ -52,8 +78,18 @@ def run_round(forge, runtime: AgentRuntime, pr_number: int, label: str,
         detail = f"\n\n```\n{tail}\n```" if tail else ""
         forge.pr_comment(pr_number, f"AI {label} round {rnd}: run failed." + detail)
         return None
+    tail = res.output.strip()[-TAIL:]
+    if not tail or degenerate(tail):
+        # empty stdout or a decode-collapsed tail is not a review: posting it
+        # as "findings" both spams the PR and feeds repair garbage (v0.3.30
+        # round 1 posted a header-only comment, round 2 posted token soup).
+        # Same contract as a failed run: reason on the PR, None upstream.
+        reason = "empty output" if not tail else "degenerate output (decode collapse) — not posted"
+        forge.pr_comment(pr_number,
+                         f"AI {label} round {rnd}: run failed — {reason}.")
+        return None
     forge.pr_comment(pr_number, f"**AI {label}, round {rnd}/{total}**\n\n"
-                             + res.output.strip()[-TAIL:])
+                             + tail)
     return res
 
 

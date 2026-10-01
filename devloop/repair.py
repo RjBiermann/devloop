@@ -12,7 +12,7 @@ merges; it only pushes commits to the PR branch that already exists.
 from .config import Config
 from .forge import Forge
 from .gate import run_gate
-from .rounds import is_lgtm, run_round, substitute, with_repo_guidance
+from .rounds import degenerate, is_lgtm, run_round, substitute, with_repo_guidance
 from .runtime import AgentRuntime
 
 REPAIR_PROMPT = (
@@ -77,7 +77,9 @@ def repair_pr(cfg: Config, forge: Forge, runtime: AgentRuntime, pr_number: int,
                          1, 1, workdir, cfg.pipeline.timeout)
         if vres and is_lgtm(vres.output):
             return ""
-        if vres:
+        # a decode-collapsed verify output must not replace real findings for
+        # the next round — keep the previous list, the budget still counts
+        if vres and not degenerate(vres.output):
             findings = vres.output.strip()
     forge.pr_comment(pr_number,
                      f"AI repair budget exhausted ({cfg.pipeline.repair_rounds} "

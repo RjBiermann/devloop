@@ -17,7 +17,7 @@ from .delivery import Outcome, deliver
 from .forge import Forge, Issue
 from .repair import repair_pr
 from .review import review_pr
-from .rounds import substitute, with_repo_guidance
+from .rounds import substitute, valid_findings, with_repo_guidance
 from .runtime import AgentRuntime
 
 log = logging.getLogger(__name__)
@@ -184,8 +184,14 @@ def process_issue(cfg: Config, forge: Forge, runtime: AgentRuntime, issue: Issue
         if out.pr:
             findings = review_pr(cfg, forge, runtime, out.pr, issue)
             if findings and cfg.pipeline.repair_rounds > 0:
-                repair_pr(cfg, forge, runtime, out.pr, branch, workdir,
-                          issue.title, issue.body, findings)
+                if valid_findings(findings):
+                    repair_pr(cfg, forge, runtime, out.pr, branch, workdir,
+                              issue.title, issue.body, findings)
+                else:
+                    # review is cheap, repair is a full agent run — findings
+                    # that don't parse never start a fixer
+                    log.info("#%d: findings failed validation — repair skipped",
+                             issue.number)
         return out
     finally:
         forge.finish_work(issue.number)
@@ -255,6 +261,12 @@ def handle_command(cfg: Config, forge: Forge, runtime: AgentRuntime,
             if not findings:
                 forge.pr_comment(pr, "`/repair`: re-review found nothing to "
                                      "fix — the PR is ready for human merge.")
+            elif not valid_findings(findings):
+                # same gate as the sweep path: garbage findings never start
+                # a fixer — the failure is already on the PR (run_round)
+                forge.pr_comment(pr, "`/repair`: re-review output failed "
+                                     "findings validation — repair skipped.")
+                return f"repair skipped for PR #{pr} — findings failed validation"
             else:
                 workdir = forge.start_work(n, branch)
                 try:
