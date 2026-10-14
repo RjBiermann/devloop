@@ -102,3 +102,12 @@ safeoutputs noop '{"message":"no action needed"}'
 Do NOT call `gh` with write verbs even if GH_TOKEN is present — `gh label add`
 403s under this token's read-only scope and the silent failure *also* leaves
 outputs.jsonl empty; only the safeoutputs CLI records real writes.
+### Terminal-action guarantee (delta 13): wrap up before the wall.
+
+gh-aw's steering extension can crash under pi v1.1.0 (`reading 'steer'`) —
+when that happens the "5 minutes left / 2 minutes left" warnings never
+surface, and long audit sweeps die with **zero safe-outputs**. Contract:
+keep partial results in `audits/` / `FINDINGS-` writes current enough that
+a wall-terminate still leaves a usable tree; opportunistic
+`safeoutputs add_comment` at each phase boundary (calibration; sweep;
+write-up) is the preferred partial-result carrier.

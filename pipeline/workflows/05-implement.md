@@ -20,7 +20,7 @@ permissions:
   pull-requests: read
 concurrency:
   group: impl-${{ github.event.issue.number }}
-timeout-minutes: 30
+timeout-minutes: 75
 max-turns: 30
 max-ai-credits: 1500
 safe-outputs:
