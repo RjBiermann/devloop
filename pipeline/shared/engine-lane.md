@@ -84,3 +84,21 @@ latter silently routed pi to the Copilot gateway and made the shipped
 locks demand a nonexistent `COPILOT_GITHUB_TOKEN`). The recognized-prefix
 form above is what the compiler's own resolution code accepts; treat
 "model segments not in the allowlist" as a compile-day tripwire.
+
+### Terminal action guarantee (delta 12 — applies to EVERY run on this lane)
+
+The `safeoutputs` CLI is on PATH; named-tool *intent* is not enough. Before
+finishing, run the write through the CLI from bash — concretely:
+
+```bash
+# state-transition workflows (queue/review/fix stages):
+safeoutputs add_labels '{"labels":[{"name":"<correct next state>"}]}'
+# verdict / narration workflows:
+safeoutputs add_comment '{"body":"..."}'
+# nothing to write? call noop instead of exiting silently:
+safeoutputs noop '{"message":"no action needed"}'
+```
+
+Do NOT call `gh` with write verbs even if GH_TOKEN is present — `gh label add`
+403s under this token's read-only scope and the silent failure *also* leaves
+outputs.jsonl empty; only the safeoutputs CLI records real writes.
