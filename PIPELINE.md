@@ -117,6 +117,24 @@ gh aw list --json | jq -e 'all(.[]; .compiled == "Yes")'
    falls back to its default reasoning for reasoning-capable models.
    Pi branch pin: `engine.lane` pins pi `version: "1.1.0"`.
 
+10. **glm-5.3-flash on Go = native lane (post-burn-in, 2026-10-14):** v0.89.21's
+   sandboxed pi gateway hard-pins the wire protocol per model prefix
+   (copilot|anthropic|openai|codex → Responses/Anthropic/etc.) —
+   chat-completions-only models CANNOT run there, and `engine.config.model`
+   overrides don't reach the aw-gateway extension. Live-proven emissive
+   fix: `sandbox.agent: false` + `features.dangerously-disable-sandbox-agent:`
+   `true` + per-workflow `strict: false` (strict compile rejects the
+   opt-out) — pi runs natively on the runner via a pre-agent `models.json`
+   (provider `openai` retargeted to `zen/go/v1`), same one-lane model,
+   same secret alias (`engine.env` override lifts `OPENCODE_API_KEY` into
+   the validate step). Everything outside the firewall holds: read-only
+   agent, safe-output allow-lists, roles gate, human merge. REMAINING
+   cosmetic: pi exits 1 on an interim provider error even after internal
+   retry — the run shows status=failure though safe-outputs landed
+   (`add_comment`/-`add_labels`-style written) and the model got a full
+   successful turn (`stopReason: stop`).
+
+
 ## Rollback (through Phase D)
 
 Devloop's bundle workflow stays **installed but disabled** until Phase D
