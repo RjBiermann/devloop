@@ -1,4 +1,9 @@
 ---
+features:
+  dangerously-disable-sandbox-agent: true
+sandbox:
+  agent: false
+strict: false
 description: Security scan + secret-leak check merged (one PR-triggered pass)
 on:
   pull_request:

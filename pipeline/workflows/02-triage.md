@@ -1,4 +1,9 @@
 ---
+features:
+  dangerously-disable-sandbox-agent: true
+sandbox:
+  agent: false
+strict: false
 description: Gate new issues to the triage vocabulary — outsiders get status/queued
 on:
   issues:

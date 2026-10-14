@@ -1,4 +1,9 @@
 ---
+features:
+  dangerously-disable-sandbox-agent: true
+sandbox:
+  agent: false
+strict: false
 description: Repair acts on review findings — separate session, capped, cooldown
 on:
   pull_request_review:

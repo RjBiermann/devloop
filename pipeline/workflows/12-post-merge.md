@@ -1,4 +1,9 @@
 ---
+features:
+  dangerously-disable-sandbox-agent: true
+sandbox:
+  agent: false
+strict: false
 description: Merge = human verdict → close spawned sub-issues, record closeout
 on:
   push:

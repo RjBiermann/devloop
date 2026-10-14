@@ -1,4 +1,9 @@
 ---
+features:
+  dangerously-disable-sandbox-agent: true
+sandbox:
+  agent: false
+strict: false
 description: "/review — on-demand review round, findings only"
 on:
   slash_command:

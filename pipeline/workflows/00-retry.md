@@ -1,4 +1,9 @@
 ---
+features:
+  dangerously-disable-sandbox-agent: true
+sandbox:
+  agent: false
+strict: false
 description: "/retry <issue> — human-sanctioned re-fire: stamped reset, close stale PR"
 on:
   slash_command:

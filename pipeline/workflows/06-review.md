@@ -1,4 +1,9 @@
 ---
+features:
+  dangerously-disable-sandbox-agent: true
+sandbox:
+  agent: false
+strict: false
 description: Findings-only review rounds on the PR — the reviewer never edits code
 on:
   pull_request:

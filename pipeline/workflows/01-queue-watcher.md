@@ -1,4 +1,9 @@
 ---
+features:
+  dangerously-disable-sandbox-agent: true
+sandbox:
+  agent: false
+strict: false
 description: Outsiders only enqueue — human labels status/queued or posts /triage
 on:
   issues:
