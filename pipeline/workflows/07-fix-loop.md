@@ -59,4 +59,11 @@ from the reviewer (ADR-0001: review finds, repair acts).
    safe-output job performs the push; you yourself stay read-only, so
    even the fixer never holds a write token.
 4. Remove `status/fixing` after the push; let re-review re-fire.
-5. Close with a work-attempt stamp.
+
+**No actionable findings?** The correct outcome is usually "nothing to fix"
+— bot reports, status annotations and stale noise are data, not tasks. But
+an empty exit is indistinguishable from a crashed run and generates a
+`[aw] no safe outputs` diagnostic (observed on the merged-PR approve, 2026-10-14).
+So: close with a work-attempt stamp, and as your final bash step emit
+`safeoutputs noop '{"message":"zero findings — nothing to repair"}'`.
+Never finish silently (delta 12 terminal-action guarantee).
