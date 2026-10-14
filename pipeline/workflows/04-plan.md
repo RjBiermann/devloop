@@ -43,8 +43,12 @@ advance a round yourself.
   Confirm the spec, propose an epic/story breakdown in a single comment.
 - **Round 3** (round 2 exists + human wrote the word `approved` +
   replies): finalize — create the sub-issues (UNLABELED: no state label,
-  no trigger label), link each as a sub-issue of the parent, then rewrite
-  the parent body as the final spec.
+  no trigger label) and link each as a sub-issue of the parent. Then post
+  the finalized spec as ONE comment on the parent (add-comment) — do NOT
+  try to edit the parent body or file a missing-tool report: `update_issue`
+  is not available in this pipeline (gh-aw v0.89.21); the comment is the
+  authoritative record and the maintainer mirrors it into the parent body
+  manually.
 
 Never apply `status/planned`: that label is human-only. Never create
 trigger labels. Every round ends with one comment, nothing else. If the
