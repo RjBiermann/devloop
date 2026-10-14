@@ -1,0 +1,37 @@
+name: 99-ci
+# Evidence-gated `verify` (required status check on main).
+# Builds + tests; on success uploads the `evidence/` artifact.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Tool versions
+        run: |
+          mkdir -p evidence
+          { python3 --version; uname -a; } >> evidence/tool-versions.txt 2>&1
+      - name: Gate — run the repo's own check
+        run: |
+          python3 --version
+          python3 -m tests.test_devloop 2>&1 | tee evidence/verify.log \
+            || { mv -f evidence/verify.log evidence/verify-failed.log; exit 1; }
+        # gate name exposure: job id is `verify`; mark it required on main
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidence
+          path: evidence/
+          if-no-files-found: error

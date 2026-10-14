@@ -1,0 +1,116 @@
+name: 90-sweeper
+# Plain NON-AI Actions workflow (ADR-0006): self-healing survives the Sweep.
+# Re-fires stuck state labels, parses budget stamps, posts the weekly
+# status report. Probability reducer, not a guarantee (Actions may skip
+# cron under load). Runs with the workflow token; the Actions bot is a
+# trusted labeler by design (migration-design §2 gate table).
+on:
+  schedule:
+    - cron: "17 */4 * * *"   # 4h, off-the-hour minute to dodge Actions load
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: heal | report | both
+        default: both
+        type: choice
+        options: [heal, report, both]
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: sweeper
+  cancel-in-progress: false
+
+env:
+  STUCK_HOURS: "12"          # state label idle longer than this re-fires
+  DAILY_ATTEMPT_CAP: "10"    # gate-stamp attempts per issue per day
+  MAX_ATTEMPTS: "20"         # lifetime attempt cap before escalation
+  BUDGET_PREFIX: "gh-aw budget:"
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Collect state
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MODE: ${{ inputs.mode || 'both' }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh api "repos/$REPO/issues?state=open&per_page=100" \
+            --paginate --jq '.[] | select(has("pull_request") | not)' > issues.json
+          wc -l < issues.json
+
+      - name: Parse ledger + heal stuck labels
+        if: inputs.mode != 'report'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          STUCK_HOURS: ${{ env.STUCK_HOURS }}
+          DAILY_ATTEMPT_CAP: ${{ env.DAILY_ATTEMPT_CAP }}
+          MAX_ATTEMPTS: ${{ env.MAX_ATTEMPTS }}
+          BUDGET_PREFIX: ${{ env.BUDGET_PREFIX }}
+        run: |
+          python3 - <<'EOF'
+          import json, os, subprocess, datetime, collections
+          repo, stuck_h = os.environ["REPO"], int(os.environ["STUCK_HOURS"])
+          cap_d, cap_max, pref = (int(os.environ["DAILY_ATTEMPT_CAP"]),
+                                  int(os.environ["MAX_ATTEMPTS"]),
+                                  os.environ["BUDGET_PREFIX"])
+          states = {"status/planned","status/in-review","status/fixing",
+                    "status/fixing-stuck","status/ready-to-merge"}
+          day = datetime.datetime.utcnow().strftime("%Y-%m-%d")
+          def gh(*a): subprocess.run(["gh",*a],check=True)
+          for it in json.load(open("issues.json")):
+              n, labels = it["number"], {l["name"] for l in it["labels"]}
+              st = labels & states
+              upd = datetime.datetime.fromisoformat(it["updated_at"].replace("Z","+00:00"))
+              idle_h = (datetime.datetime.now(datetime.timezone.utc)-upd).total_seconds()/3600
+              # Ledger: count today's (or lifetime) stamps from the issue comments
+              out = subprocess.run(["gh","api",f"repos/{repo}/issues/{n}/comments",
+                                    "--paginate","--jq",".[].body"],
+                                   capture_output=True,text=True).stdout
+              stamps = [l for l in out.splitlines() if l.strip().startswith(pref)]
+              today  = sum(day in s for s in stamps)          # daily budget
+              life   = sum("attempt=" in s for s in stamps)   # max_attempts
+              reset  = any("reset" in s for s in stamps)
+              budget = 0 if reset else life
+              # 1) Attempt caps -> escalate
+              if st and budget >= cap_max:
+                  if "status/fixing-stuck" not in labels:
+                      gh("issue","edit",str(n),"--repo",repo,
+                         "--add-label","status/fixing-stuck")
+                      gh("issue","comment",str(n),"--repo",repo,
+                         "--body",f"{pref} escalated: {budget} attempts; needs human.")
+                  continue
+              # 2) Daily cap -> skip this round (cooldown can't accumulate)
+              if today >= cap_d:
+                  continue
+              # 3) Stuck -> re-fire by remove+re-add of the state label
+              if st and idle_h > stuck_h:
+                  for lb in sorted(st):
+                      gh("issue","edit",str(n),"--repo",repo,"--remove-label",lb)
+                      gh("issue","edit",str(n),"--repo",repo,"--add-label",lb)
+                  gh("issue","comment",str(n),"--repo",repo,
+                     "--body",f"{pref} re-fired: `{lb}` idle {int(idle_h)}h.")
+          EOF
+
+      - name: Weekly status report (devloop status successor)
+        if: inputs.mode != 'heal'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        # weekly = triggered by the cron every 4h; post only on Mondays
+        env:
+          INPUT_MODE: ${{ inputs.mode == '' && 'both' || inputs.mode }}
+        run: |
+          [ "$INPUT_MODE" = "report" ] || [ "$(date +%u)" = "1" ] || exit 0
+          gh issue list --repo "$REPO" --state open --json number,title,labels \
+            --template '{{range .}}- #{{.number}} {{.title}} {{range .labels}}`{{.name}}` {{end}}
+{{end}}' > report.md
+          gh issue create --repo "$REPO" \
+            --title "[status-report] weekly $(date +'%Y-%m-%d')" \
+            --body-file report.md || gh issue list --repo "$REPO" -s "status-report" >/dev/null
