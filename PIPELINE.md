@@ -99,6 +99,23 @@ gh aw list --json | jq -e 'all(.[]; .compiled == "Yes")'
 5. Safe-output batches are **not atomic** across operations; partial
    failure is healed by the sweeper re-checking the "one state label"
    invariant.
+6. **Threat detection**: gh-aw's AI detection runs on the Copilot engine;
+   without Copilot access it can't run. Every workflow sets
+   `safe-outputs.threat-detection: false` (documented-off; default was
+   non-blocking anyway). Compensating controls stay: read-only agents,
+   safe-output allow-lists, human-only labels/merge, gate framing. If
+   Copilot access ever exists, flip the flag to re-enable CTR analysis.
+7. **`slash_command` + `pull_request` are mutually exclusive in one
+   workflow** — `/review` lives in its own file now
+   (`06b-command-review.md`); 06-review is PR-triggered only.
+8. **Import paths are repo-root-relative at install time**
+   (`.github/workflows/shared/*.md`) — the pipeline source tree uses
+   `../shared/...` and the deploy step rewrites them (one sed).
+9. **Go GLM reasoning quirk** (from the adopter's own #479/#493 history):
+   the GLM upstream 400s on `reasoning_effort`, so the lane's
+   `models.json` sets `"reasoning": false` explicitly — never omit, pi
+   falls back to its default reasoning for reasoning-capable models.
+   Pi branch pin: `engine.lane` pins pi `version: "1.1.0"`.
 
 ## Rollback (through Phase D)
 

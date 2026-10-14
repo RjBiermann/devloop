@@ -13,6 +13,7 @@ timeout-minutes: 15
 max-turns: 15
 max-ai-credits: 250
 safe-outputs:
+  threat-detection: false   # engine:pi detection runs on Copilot CLI — not available (no Copilot); structural guardrails + human merge carry the boundary
   create-issue:
     max: 1
     title-prefix: "[cost-report] "

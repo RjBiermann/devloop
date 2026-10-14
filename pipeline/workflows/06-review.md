@@ -3,9 +3,6 @@ description: Findings-only review rounds on the PR — the reviewer never edits 
 on:
   pull_request:
     types: [opened, synchronize]
-  slash_command:
-    name: review
-    events: [issue_comment, pull_request_review_comment]
   roles: [admin, maintainer, write]
 imports:
   - ../shared/engine-lane.md
@@ -19,6 +16,7 @@ timeout-minutes: 25
 max-turns: 25
 max-ai-credits: 800
 safe-outputs:
+  threat-detection: false   # engine:pi detection runs on Copilot CLI — not available (no Copilot); structural guardrails + human merge carry the boundary
   create-pull-request-review-comment:
     max: 10
   add-comment:

@@ -24,6 +24,7 @@ pre-agent-steps:
               {
                 "id": "glm-5.3-flash",
                 "name": "GLM-5.3-Flash (OpenCode Go)",
+          "reasoning": false,
                 "input": ["text"],
                 "cost": { "input": 0.15, "output": 0.5, "cacheRead": 0.03, "cacheWrite": 0 }
               }

@@ -101,16 +101,13 @@ jobs:
       - name: Weekly status report (devloop status successor)
         if: inputs.mode != 'heal'
         env:
+          INPUT_MODE: ${{ inputs.mode == '' && 'both' || inputs.mode }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
-        # weekly = triggered by the cron every 4h; post only on Mondays
-        env:
-          INPUT_MODE: ${{ inputs.mode == '' && 'both' || inputs.mode }}
         run: |
           [ "$INPUT_MODE" = "report" ] || [ "$(date +%u)" = "1" ] || exit 0
-          gh issue list --repo "$REPO" --state open --json number,title,labels \
-            --template '{{range .}}- #{{.number}} {{.title}} {{range .labels}}`{{.name}}` {{end}}
-{{end}}' > report.md
+          gh issue list --repo "$REPO" --state open --json number,title,labels > issues-report.json
+          python3 -c 'import json;items=json.load(open("issues-report.json"));print("## Open issue state\n"+"\n".join("- #%d %s %s"%(i["number"],i["title"]," ".join(l["name"] for l in i["labels"])) for i in items) or "(none)")' > status-report.md
           gh issue create --repo "$REPO" \
             --title "[status-report] weekly $(date +'%Y-%m-%d')" \
-            --body-file report.md || gh issue list --repo "$REPO" -s "status-report" >/dev/null
+            --body-file status-report.md

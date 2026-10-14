@@ -19,6 +19,7 @@ timeout-minutes: 30
 max-turns: 30
 max-ai-credits: 1500
 safe-outputs:
+  threat-detection: false   # engine:pi detection runs on Copilot CLI — not available (no Copilot); structural guardrails + human merge carry the boundary
   create-pull-request:
     max: 1
     title-prefix: "[impl] "
