@@ -48,6 +48,10 @@ pre-agent-steps:
       JSON
 env:
   OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+  # Native lane has no AWF gh-proxy sidecar: the agent's gh CLI reads GitHub
+  # as this workflow token, scoped by each workflow's own permissions block
+  # (issues/pull-requests/contents read in this pipeline's workflows).
+  GH_TOKEN: ${{ github.token }}
 network:
   allowed:
     - defaults
