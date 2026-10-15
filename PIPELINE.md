@@ -234,3 +234,14 @@ surface carried the noise). Fixed contract in the engine lane's
 terminal-action block: **payload through one channel, never both**, plus
 "check for placeholder residue before invoking; re-exec on malformed call"
 (a malformed call is free — a processed output is not).
+
+## Delta 16 — the mechanical conveyor (ADR-0008, 2026-10-15)
+
+Session-side orchestration (approve stuck companion runs, queue merges,
+stamp next-story triggers, close transient `[aw]` diagnostics) is now
+GitHub-native: plain-Actions `95-orchestrator.yml`, scheduled every 10
+minutes, no engine block — a sibling of `90-sweeper`. Human decision stays
+once per chain (the plan loop's `approved`), execution is mechanical.
+Revertible by three switches: repo variable `GH_AW_AUTO_MERGE=false`,
+deleting secret `GH_AW_PROXY_PAT` (approvals stay manual), or removing the
+workflow file. Documented in `docs/adr/0008-mechanical-conveyor.md`.

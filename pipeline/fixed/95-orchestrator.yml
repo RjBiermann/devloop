@@ -1,0 +1,140 @@
+name: Orchestrator (mechanical conveyor — approvals, merge, chain)
+
+# ADR-0008: the maintainer's session-side orchestration lives on GitHub.
+# Non-AI by design — no engine, no agent; a state-machine citizen like
+# 90-sweeper. Human decision points remain: ai-* trigger labels, the plan
+# loop's `approved`, human-authored PR reviews, and any stuck state.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: orchestrator
+  cancel-in-progress: true
+
+env:
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  orchestrate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Approve companion runs stuck in action_required
+        # Bot-authored devloop/* PRs put every workflow on the branch into
+        # action_required (the author actor has no write role). Approving the
+        # NON-AI companion checks is mechanical; agent workflows are excluded
+        # — their runs stay visible pending human attention. Needs an admin
+        # PAT (GH_AW_PROXY_PAT); skipped with a warning when the secret is
+        # unset so a fresh adopter does not fail either way.
+        env:
+          PROXY_PAT: ${{ secrets.GH_AW_PROXY_PAT }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${PROXY_PAT}" ]]; then
+            echo "::warning::GH_AW_PROXY_PAT unset — approval step skipped (runs stay action_required until a maintainer approves)"
+            exit 0
+          fi
+          ALLOWLIST=$(cat <<'EOF'
+          99-ci
+          Lint
+          CodeQL Advanced
+          CodeQL
+          Security scan (08+09 merged)
+          Automatic Dependency Submission (Gradle)
+          Review (findings only; ADR-0001 semantics preserved)
+          Review (command — findings only; ADR-0001 semantics)
+          EOF
+          )
+          for b in $(gh pr list --json headRefName,state --jq '.[] | select(.state=="open") | .headRefName' | grep '^devloop/' || true); do
+            while IFS=$'\t' read -r rid wname; do
+              IFS=$'\n' read -d '' -r -a wl <<<"$ALLOWLIST" || true
+              matched=0
+              for wl_name in "${wl[@]}"; do
+                [[ "$wname" == "$wl_name" ]] && matched=1 && break
+              done
+              if [[ "$matched" == 1 ]]; then
+                code=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+                  -H "Authorization: Bearer ${PROXY_PAT}" \
+                  -H "Accept: application/vnd.github+json" \
+                  "https://api.github.com/repos/${{ github.repository }}/actions/runs/${rid}/approve")
+                echo "run ${rid} (${wname}): approve -> HTTP ${code}"
+              fi
+            done < <(gh run list --branch "$b" --json databaseId,workflowName,conclusion \
+              --jq '.[] | select(.conclusion=="action_required") | [.databaseId,.workflowName] | @tsv')
+          done
+
+      - name: Enable auto-merge on spec-chain PRs
+        # Human decision was made once per chain (round-3 `approved`); the
+        # per-PR merge moment is mechanical when every required context is
+        # green. `--auto` queues the merge so branch protection itself
+        # remains the actual gate. Switch off via repo variable
+        # GH_AW_AUTO_MERGE=false to return merges to the maintainer's hand.
+        env:
+          AUTO_MERGE: ${{ vars.GH_AW_AUTO_MERGE }}
+        run: |
+          set -euo pipefail
+          if [[ "${AUTO_MERGE:-true}" != "true" ]]; then
+            echo "GH_AW_AUTO_MERGE!=true — auto-merge disabled by adopter; merges stay manual"
+            exit 0
+          fi
+          for pr in $(gh pr list --json number,headRefName,isDraft,state \
+              --jq '.[] | select(.state=="open" and (.isDraft|not)) \
+                    | select(.headRefName|startswith("devloop/issue-")) | .number'); do
+            gh pr merge "$pr" --squash --auto >/dev/null 2>&1 \
+              && echo "PR $pr: auto-merge queued" \
+              || echo "PR $pr: merge spec not satisfiable yet (checks/responses pending)"
+          done
+
+      - name: Drive the story chain (next sibling gets the trigger)
+        # Plan round-3 created [spec] Story sub-issues unlabeled. When story
+        # N-1's PR merged (and its sub-issue closed), story N is authorized —
+        # the same hand-approval that created the chain — so stamp
+        # status/planned. Never touches ai-* (those stay human-only).
+        run: |
+          set -euo pipefail
+          mapfile -t issues < <(gh issue list --state open --json number,title,labels \
+            --jq '.[] | select((.title|startswith("[spec]"))) | select((.labels | map(.name) | index("status/planned") | not)) | $[.number] + "|||" + .title' | sed 's/\r$//')
+          for line in "${issues[@]}"; do
+            n="${line%%|||*}"; t="${line#*|||}"
+            nown=$(echo "$t" | grep -oE 'Story[[:space:]]+[0-9]+' | grep -oE '[0-9]+' || true)
+            [[ -z "$nown" ]] && continue
+            prev=$((nown - 1)); [[ "$prev" -lt 1 ]] && continue
+            pt=$(gh issue list --state all --search "[spec] Story ${prev}" --limit 1 --json state \
+                 --jq '.[0].state // "-"')
+            if [[ "$pt" == "CLOSED" && "$nown" == 2 ]]; then
+              gh issue edit "$n" --add-label status/planned >/dev/null \
+                && echo "story ${nown} (issue ${n}): trigger stamped (story 1 merged)"
+            elif [[ "$pt" == "CLOSED" ]]; then
+              e=$(gh issue list --state all --search "[spec] Story $((nown-1))" --limit 1 --json state --jq '.[0].state // "-"')
+              [[ "$e" == "CLOSED" ]] && gh issue edit "$n" --add-label status/planned >/dev/null \
+                && echo "story ${nown} (issue ${n}): trigger stamped (story $((nown-1)) merged)"
+            fi
+          done
+
+      - name: Watchdog — close transient [aw] diagnostics after a later success
+        # The transient class (empty gateway completion mid-turn) already has
+        # its [aw] gate; closing repeats-of-known-shape here prevents a
+        # maintainer cycle from reading re-runs. Guard: only when a LATER
+        # successful run of the same workflow exists after the failure.
+        run: |
+          set -euo pipefail
+          ml=$(gh issue list --state open --search 'is:issue author:app/github-actions "[aw]"' --limit 20 \
+               --json number,title,createdAt --jq '.[] | select((.title|contains("no safe outputs")) or (.title|contains("reported incomplete"))) | [.number,.title,.createdAt] | @tsv')
+          while IFS=$'\t' read -r n t created; do
+            [[ -z "$n" ]] && continue
+            if gh run list --limit 40 --json name,conclusion,createdAt \
+                 --jq --arg since "$created" \
+                 '[.[] | select(.conclusion=="success") | select((.name|contains("Implement")) or (.name|contains("Plan"))) | select(.createdAt > $since)] | length > 0' >/dev/null 2>&1; then
+              gh issue close "$n" --reason "not planned" \
+                -c "Transient-class `[aw]` signal: a later successful run exists after this failure (orchestrator watchdog). If the underlying work is still incomplete, reopen with new evidence." >/dev/null \
+                && echo "closed transient diag #${n}"
+            fi
+          done <<< "$ml"
