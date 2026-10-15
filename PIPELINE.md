@@ -245,3 +245,21 @@ once per chain (the plan loop's `approved`), execution is mechanical.
 Revertible by three switches: repo variable `GH_AW_AUTO_MERGE=false`,
 deleting secret `GH_AW_PROXY_PAT` (approvals stay manual), or removing the
 workflow file. Documented in `docs/adr/0008-mechanical-conveyor.md`.
+
+### Delta 16 amendment — same-day changes (ADR-0008 amended)
+
+- **Merges return to the maintainer** (user decision): default is the
+  human-merge contract — the orchestrator labels `status/ready-to-merge`
+  and @mentions the owner when all checks are green. Auto-merge queueing
+  is opt-in per repo (`GH_AW_AUTO_MERGE=true`; unset/false = the
+  maintainer clicks merge).
+- **Plan-loop surrogate**: the orchestrator fires `/plan` mechanically —
+  round 1 on a fresh `ai-*` trigger, round 2 when the human answered a
+  round-1 clarifier, round 3 when the owner replies `approved`. Every
+  firing carries a per-round `[orchestrator]` marker so it can never
+  loop. Content decisions remain human.
+- **Decision tags**: when a round is waiting on the maintainer, one
+  `@owner decision needed` comment is posted (deduped per round).
+- Implementation is a committed python script (`.github/orchestrator.py`,
+  single entry, per-step try/except so one failure never blocks the rest)
+  driven by `95-orchestrator.yml` (10-minute cadence, single-flight).
