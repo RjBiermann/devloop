@@ -263,3 +263,16 @@ workflow file. Documented in `docs/adr/0008-mechanical-conveyor.md`.
 - Implementation is a committed python script (`.github/orchestrator.py`,
   single entry, per-step try/except so one failure never blocks the rest)
   driven by `95-orchestrator.yml` (10-minute cadence, single-flight).
+
+### Delta 16 follow-up (first orchestrator live-run findings, f-o-f run 38816082027)
+
+- **Crash**: the nit-fold commit's preflight helper still referenced the
+  removed `gh_json` shim → NameError on first scheduled pass. Fixed to
+  use the `api()` surface (f-o-f PR #624).
+- **Review blockers folded**: story-state comparisons lowercase-tolerant;
+  auto-merge path now requires the chain's owner approval comment before
+  queueing merges (falls back to readiness ping otherwise).
+- **Round-anchor convention codified**: 04-plan.md round posts begin with
+  `Plan round N — ` exactly; the conveyor detects loop state by that
+  anchor, so the fragility the in-flow review flagged becomes a compile-
+  day contract instead of a guess.

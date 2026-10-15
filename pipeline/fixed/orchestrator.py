@@ -39,6 +39,11 @@ TAG_OWNER = os.environ.get("GH_AW_ORCH_TAG_OWNER", "true") == "true"
 OWNER = os.environ.get("GH_AW_ORCH_OWNER", "RjBiermann")
 
 MARK = "[orchestrator]"
+
+
+def _fire_marker(rnd):
+    """Single source of truth for the per-round fire marker (lint-relevant)."""
+    return f"{MARK} /plan fired round {rnd}"
 STORY_RE = re.compile(r"\[spec\]\s*(?:Story\s+|S)(\d+)", re.I)
 PARENT_RE = re.compile(r"approved\s+#(\d+)\s+spec", re.I)
 ROUND_ANCH = {r: f"Plan round {r} —" for r in (1, 2, 3)}
@@ -154,9 +159,27 @@ def merge_readiness():
             print(f"[orchestrator] PR #{num}: mergeable_state={mstate} — not ready")
             continue
         if AUTO_MERGE:
-            run(["gh", "pr", "merge", str(num), "--squash", "--auto"])
-            print(f"[orchestrator] PR #{num}: auto-merge queued")
-            continue
+            # ADR-0008 gate decision (post-merge review): auto-merge may only
+            # act on chains whose round-3 approval comment exists on the
+            # parent spec issue (parsing "[spec] Story" detour not needed —
+            # the gate is evidence-level: the owner decision comment must
+            # exist on the PR's own thread or the parent found from the body).
+            gate_ok = False
+            body = (api(f"pulls/{num}") or {}).get("body") or ""
+            import re as _re
+            mm = _re.search(r"approved\s+#(\d+)\s+spec", body) or _re.search(r"Closes\s+#(\d+)", body)
+            if mm:
+                parent_n = mm.group(1)
+                gate_ok = any(
+                    (c.get("user", {}).get("login") == OWNER
+                     and (c.get("body") or "").strip().lower() in ("approved", "approve", "lgtm", "yes", "ok"))
+                    for c in (api(f"issues/{parent_n}/comments") or []))
+            if not gate_ok:
+                print(f"[orchestrator] PR #{num}: auto-merge gate requires the chain's owner approval — falling back to readiness ping")
+            else:
+                run(["gh", "pr", "merge", str(num), "--squash", "--auto"])
+                print(f"[orchestrator] PR #{num}: auto-merge queued (spec approved)")
+                continue
         sha = ((d.get("head") or {}).get("sha") or "")[:12]
         marker = f"ready @{OWNER} — all required checks green at `{sha}`"
         if _has_marker(comments(num), marker):
@@ -186,7 +209,7 @@ def chain_driver():
                 print(f"[orchestrator] story 1 (issue {s['number']}): no round-3 approval recorded — waiting on human")
             continue
         pstate = _story_state(num_story - 1, stories)
-        if pstate in ("closed", "CLOSED"):
+        if str(pstate).lower() == "closed":
             label_issue(s["number"], "status/planned")
             print(f"[orchestrator] story {num_story} (issue {s['number']}): trigger stamped (story {num_story-1} closed)")
         else:
@@ -202,7 +225,7 @@ def chain_driver():
         p = api(f"issues/{pid}")
         if not p or p.get("state") != "open":
             continue
-        if all(k["state"] in ("closed", "CLOSED") for k in kids):
+        if all(str(k.get("state","")) .lower() == "closed" for k in kids):
             c = comments(pid)
             if not _has_marker(c, "all stories of this approved chain are closed"):
                 close_issue(pid, "completed",
@@ -231,6 +254,7 @@ def plan_loop_surrogate():
         return
     issues = api("issues?state=open&per_page=50") or []
     triggers = ("ai-fix", "ai-build", "ai-remove", "ai-new-site")
+    stories = all_stories()  # hoisted: one repo scan per pass (review nit)
     for i in issues:
         if i.get("pull_request"):
             continue
@@ -238,32 +262,32 @@ def plan_loop_surrogate():
         labels = [l["name"] for l in i.get("labels", [])]
         cs = comments(n)
         r1, r2, r3 = (_round_comment(cs, k) for k in (1, 2, 3))
-        kid_stories = [s for s in all_stories() if parent_of(s) == n]
+        kid_stories = [s for s in stories if parent_of(s) == n]
 
         fresh_trigger = any(l in triggers for l in labels)
         if fresh_trigger and not r1:
-            mk = f"{MARK} /plan fired round 1"
+            mk = _fire_marker(1)
             if not _has_marker(cs, mk):
-                post_comment(n, mk + " (fresh trigger label; ADR-0008 surrogate)")
+                post_comment(n, mk + " (fresh trigger; ADR-0008 surrogate)")
                 print(f"[orchestrator] {n}: /plan round 1 fired")
             continue
         if not r1:
             continue
         # round 2: human answered after round 1
         if not r2 and not kid_stories:
-            if not _has_marker(cs, f"{MARK} /plan fired round 2"):
+            if not _has_marker(cs, _fire_marker(2)):
                 human_after = [c for c in cs if c.get("user", {}).get("login") == OWNER and c["created_at"] > r1["created_at"]]
                 if human_after:
-                    post_comment(n, f"{MARK} /plan fired round 2 (round-1 answers received; ADR-0008 surrogate)")
+                    post_comment(n, _fire_marker(2) + " (round-1 answers received; ADR-0008 surrogate)")
                     print(f"[orchestrator] {n}: /plan round 2 fired")
         # round 3: owner approved after round 2
         if r2 and not kid_stories and not r3:
-            if not _has_marker(cs, f"{MARK} /plan fired round 3"):
+            if not _has_marker(cs, _fire_marker(3)):
                 appr = [c for c in cs if c.get("user", {}).get("login") == OWNER
                         and c["created_at"] > r2["created_at"]
                         and (c.get("body") or "").strip().lower() in ("approved", "approve", "lgtm", "yes", "ok")]
                 if appr:
-                    post_comment(n, f"{MARK} /plan fired round 3 (finalize; round-2 approved; ADR-0008 surrogate)")
+                    post_comment(n, _fire_marker(3) + " (finalize; round-2 approved; ADR-0008 surrogate)")
                     print(f"[orchestrator] {n}: /plan round 3 fired")
 
 
@@ -320,6 +344,16 @@ def watchdog():
             print(f"[orchestrator] closed transient diag #{num}")
 
 
+def _preflight_labels():
+    """One-time existence check: every stamp silently fails if a label is
+    missing (rc is stderr-only in the Actions UI)."""
+    labels = api("labels?per_page=100") or {}
+    names = {l.get("name") for l in (labels if isinstance(labels, list) else [])}
+    for need in ("status/planned", "status/ready-to-merge", "status/queued", "status/in-review"):
+        if need not in names:
+            print(f"[orchestrator] ::warning::label missing on repo: '{need}' — stamps will no-op silently")
+
+
 if __name__ == "__main__":
     steps = {
         "approvals": approve_companion_runs,
@@ -329,6 +363,7 @@ if __name__ == "__main__":
         "decision_tags": decision_tags,
         "watchdog": watchdog,
     }
+    _preflight_labels()
     only = [a for a in sys.argv[1:] if a in steps]
     for name, fn in steps.items():
         if only and name not in only:
