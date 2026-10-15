@@ -221,3 +221,16 @@ own contract. `07-fix-loop.md` body now states the zero-findings outcome
 explicitly: close with a work-attempt stamp **and** emit
 `safeoutputs noop …` as the final bash step; an empty exit is a defect in
 every workflow. devloop `e2ab258` / f-o-f `b6822e0`.
+
+## Delta 15 — safe-output payload channels (2026-10-15, f-o-f #613)
+
+A `/plan` agent built its clarify-question payload in a heredoc, then
+invoked `safeoutputs add_comment` **with both** the heredoc on stdin and an
+inline `body: "sentinel"` placeholder arg — the CLI takes the inline arg,
+the heredoc was discarded, and the run's entire `add_comment.max: 1`
+budget was spent emitting a one-word placeholder comment (run 38685870541;
+the run itself concluded `failure` only via that mismatch, and the issue
+surface carried the noise). Fixed contract in the engine lane's
+terminal-action block: **payload through one channel, never both**, plus
+"check for placeholder residue before invoking; re-exec on malformed call"
+(a malformed call is free — a processed output is not).

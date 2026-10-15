@@ -102,6 +102,17 @@ safeoutputs noop '{"message":"no action needed"}'
 Do NOT call `gh` with write verbs even if GH_TOKEN is present — `gh label add`
 403s under this token's read-only scope and the silent failure *also* leaves
 outputs.jsonl empty; only the safeoutputs CLI records real writes.
+
+**Payload exactly once** (delta 15, after f-o-f #613): pass the payload
+through ONE channel — a single quoted inline argument *or* stdin, never
+both. When stdin AND `--body` are both given, the inline placeholder wins
+and the real payload (heredoc) is discarded — the run burns its entire
+`add_comment` budget on a one-word placeholder and the composed content
+never lands. Before invoking, check the command contains no stray
+placeholder (`sentinel`, `TODO`, `"..."`), then write the real body.
+After any malformed call, immediately re-run with the corrected args —
+a malformed call does not consume tool-invocation budget, only a
+*processed* output does.
 ### Terminal-action guarantee (delta 13): wrap up before the wall.
 
 gh-aw's steering extension can crash under pi v1.1.0 (`reading 'steer'`) —
