@@ -32,6 +32,7 @@ safe-outputs:
   create-pull-request:
     max: 1
     title-prefix: "[impl] "
+    draft: false   # ADR-0008: ready PRs are the conveyor's currency; a session-side `gh pr ready` was bare chore, removed
   add-labels:
     allowed: [status/in-review]
     max: 1
