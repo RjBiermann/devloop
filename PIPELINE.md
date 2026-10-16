@@ -295,3 +295,16 @@ Raising `create-issue.max` alone leaves `link-sub-issue.max` at 6 — the
 review agent flagged the asymmetric cap before a single wave hit it.
 Both raised to 30 in `04-plan.md` so one round emits and links the whole
 remaining wave for the 26-provider epic (#631).
+
+### Delta 16 follow-up 4 — wave-1 per-provider runs: two schema findins (2026-10-16)
+
+- **findings.json merge collisions**: 2 simultaneous per-provider runs wrote
+  `last_runs` entries both labeled `run15`/`run16` and merged cleanly on
+  the epic's carve-out; the registry merge needed a settlement marker in
+  the epic notes (f-o-f PR #667).
+- **Base-branch overrides via agent**: implement agent PR creations
+  carrying a base-branch `master` override were rejected by gh-aw's
+  safe-output layer ("allowed-base-branches is not configured"). Fixed
+  by pinning `allowed-base-branches: [main]` in 05-implement.md (the
+  per-provider epic has ONE default branch; per-run overrides remain a
+  deliberate, not accidental, mechanic).
