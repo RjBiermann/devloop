@@ -24,10 +24,10 @@ safe-outputs:
   add-comment:
     max: 1
   create-issue:
-    max: 6
+    max: 30
     title-prefix: "[spec] "
   link-sub-issue:
-    max: 6
+    max: 30
 ---
 
 # Plan (spec loop port)

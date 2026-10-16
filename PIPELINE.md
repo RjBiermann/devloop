@@ -288,3 +288,10 @@ dedupe marker trailing. Separately, GitHub throttled the */10 cron
 event-driven — `issues:[opened,labeled]` and `pull_request:[closed]` —
 with the cron retained as background sweep. Triggers are idempotent and
 single-flight (`concurrency: orchestrator`).
+
+### Delta 16 follow-up 3 — caps for the per-provider epic (2026-10-16, #638 review)
+
+Raising `create-issue.max` alone leaves `link-sub-issue.max` at 6 — the
+review agent flagged the asymmetric cap before a single wave hit it.
+Both raised to 30 in `04-plan.md` so one round emits and links the whole
+remaining wave for the 26-provider epic (#631).
