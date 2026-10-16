@@ -5,9 +5,13 @@ name: Orchestrator (mechanical conveyor — approvals, readiness, chain, surroga
 # humans still merge PRs by default (GH_AW_AUTO_MERGE=false).
 
 on:
-  schedule:
-    - cron: "*/10 * * * *"
+  schedule:                 # background sweep (GitHub throttles schedules under
+    - cron: "*/10 * * * *"  # load; event triggers carry the chain latency)
   workflow_dispatch:
+  issues:
+    types: [opened, labeled]      # fresh trigger labels / new specs go instantly
+  pull_request:
+    types: [closed]               # chain advance immediately after a merge
 
 permissions:
   contents: read

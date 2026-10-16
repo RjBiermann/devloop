@@ -276,3 +276,15 @@ workflow file. Documented in `docs/adr/0008-mechanical-conveyor.md`.
   `Plan round N — ` exactly; the conveyor detects loop state by that
   anchor, so the fragility the in-flow review flagged becomes a compile-
   day contract instead of a guess.
+
+### Delta 16 follow-up 2 — surrogate fire format + event-driven conveyor (2026-10-16, from the #631 test)
+
+The plan-loop surrogate's fire bodies began "[orchestrator] …", which
+gh-aw's slash-command parser ignores (only bodies starting with the
+command trigger the workflow) — the surrogate "fired" markers no plan
+ever saw. `_fire_marker()` now composes `/plan`-leading bodies with the
+dedupe marker trailing. Separately, GitHub throttled the */10 cron
+(silent skip; observed 2h+ gaps), so the conveyor also triggers
+event-driven — `issues:[opened,labeled]` and `pull_request:[closed]` —
+with the cron retained as background sweep. Triggers are idempotent and
+single-flight (`concurrency: orchestrator`).

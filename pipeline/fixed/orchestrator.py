@@ -42,8 +42,10 @@ MARK = "[orchestrator]"
 
 
 def _fire_marker(rnd):
-    """Single source of truth for the per-round fire marker (lint-relevant)."""
-    return f"{MARK} /plan fired round {rnd}"
+    """Body of a surrogate fire. MUST begin with /plan — gh-aw's
+    slash-command parser only recognizes bodies that start with the
+    command; the [orchestrator] marker trails for dedupe."""
+    return f"/plan\n\n{MARK} /plan fired round {rnd}"
 STORY_RE = re.compile(r"\[spec\]\s*(?:Story\s+|S)(\d+)", re.I)
 PARENT_RE = re.compile(r"approved\s+#(\d+)\s+spec", re.I)
 ROUND_ANCH = {r: f"Plan round {r} —" for r in (1, 2, 3)}
